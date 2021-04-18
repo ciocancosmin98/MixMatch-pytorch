@@ -7,6 +7,7 @@ import time
 import random
 
 import numpy as np
+import cv2
 
 import torch
 import torch.nn as nn
@@ -19,6 +20,7 @@ import torch.nn.functional as F
 
 import models.wideresnet as models
 import dataset.cifar10 as dataset
+import dataset.custom_dataset as custom_ds
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
 from tensorboardX import SummaryWriter
 
@@ -47,6 +49,8 @@ parser.add_argument('--train-iteration', type=int, default=1024,
                         help='Number of iteration per epoch')
 parser.add_argument('--out', default='result',
                         help='Directory to output the result')
+parser.add_argument('--nclasses', type=int, default='10',
+                        help='Number of classes to train on')
 parser.add_argument('--alpha', default=0.75, type=float)
 parser.add_argument('--lambda-u', default=75, type=float)
 parser.add_argument('--T', default=0.5, type=float)
@@ -120,6 +124,63 @@ class MyCrossEntropy(nn.CrossEntropyLoss):
         target = target.long()
         return F.cross_entropy(_input, target, weight=self.weight, ignore_index=self.ignore_index, reduction=self.reduction)
 
+def get_filenames(img_dir='data\\animal_dataset\\images'):
+    filenames = {}
+    classes = os.listdir(img_dir)
+    for cls in classes:
+        filenames[cls] = []
+        
+        path_to_class = os.path.join(img_dir, cls)
+        for fname in os.listdir(path_to_class):
+            filenames[cls].append(os.path.join(path_to_class, fname))
+
+    return filenames, classes
+
+def get_fnames128():
+    fnames_128 = {}
+
+    filenames, classes = get_filenames()
+
+    for cls in filenames:
+        fnames_128[cls] = []
+        for fname in filenames[cls]:
+            try:
+                img = cv2.imread(fname)
+            except:
+                print('EXCEPTION READING')
+                continue
+                
+            if img is None:
+                print('IMG IS NONE')
+                continue
+                
+            height, width = img.shape[0], img.shape[1]
+            if height >= 128 and width >= 128:
+                fnames_128[cls].append(fname)
+    return fnames_128, classes
+
+def get_labeled_unlabeled():
+    fnames_128, classes = get_fnames128()
+
+    n_labeled = 1000
+    n_classes = len(classes)
+    n_labeled_per_class = int(n_labeled / n_classes)
+
+    seed = 42
+    random.seed(seed)
+
+    unlabeled_fnames = []
+    labeled_fnames = {}
+
+    for cls in fnames_128:
+        random.shuffle(fnames_128[cls])
+        
+        labeled_fnames[cls] = fnames_128[cls][:n_labeled_per_class]
+        unlabeled_fnames.extend(fnames_128[cls][n_labeled_per_class:])
+
+    return labeled_fnames, unlabeled_fnames
+
+"""
 def get_cifar10_default():
     print(f'==> Preparing cifar10')
     transform_train = transforms.Compose([
@@ -139,12 +200,41 @@ def get_cifar10_default():
     test_loader = data.DataLoader(test_set, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
     return labeled_trainloader, unlabeled_trainloader, val_loader, test_loader
+"""
+
+def get_custom_hardcoded():
+    print(f'==> Preparing the custom dataset')
+    transform_train = transforms.Compose([
+        dataset.RandomPadandCrop(32),
+        dataset.RandomFlip(),
+        dataset.ToTensor(),
+    ])
+
+    transform_val = transforms.Compose([
+        dataset.ToTensor(),
+    ])
+
+    labeled_fnames, unlabeled_fnames = get_labeled_unlabeled()
+
+    train_labeled_set, train_unlabeled_set, val_set, test_set = custom_ds.get_custom(
+        './data/animal_dataset',
+        labeled_fnames,
+        unlabeled_fnames, 
+        transform_train=transform_train,
+        transform_val=transform_val)
+    labeled_trainloader = data.DataLoader(train_labeled_set, batch_size=args.batch_size, shuffle=True, num_workers=0, drop_last=True)
+    unlabeled_trainloader = data.DataLoader(train_unlabeled_set, batch_size=args.batch_size, shuffle=True, num_workers=0, drop_last=True)
+    val_loader = data.DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=0)
+    test_loader = data.DataLoader(test_set, batch_size=args.batch_size, shuffle=False, num_workers=0)
+
+    return labeled_trainloader, unlabeled_trainloader, val_loader, test_loader
+    
 
 def get_wideresnet_models():
     print("==> creating WRN-28-2")
 
     def create_model(ema=False):
-        model = models.WideResNet(num_classes=10)
+        model = models.WideResNet(num_classes=args.nclasses)
         model = model.cuda()
 
         if ema:
@@ -164,8 +254,11 @@ def main():
     if not os.path.isdir(args.out):
         mkdir_p(args.out)
 
+    #labeled_trainloader, unlabeled_trainloader, val_loader, test_loader = \
+    #        get_cifar10_default()
+
     labeled_trainloader, unlabeled_trainloader, val_loader, test_loader = \
-            get_cifar10_default()
+            get_custom_hardcoded()
 
     model, ema_model = get_wideresnet_models()
     ts = TrainState(model, ema_model)
@@ -310,7 +403,7 @@ def train(labeled_trainloader, unlabeled_trainloader, epoch, use_cuda,
         batch_size = inputs_x.size(0)
 
         # Transform label to one-hot
-        targets_x = torch.zeros(batch_size, 10).scatter_(1, targets_x.view(-1,1).long(), 1)
+        targets_x = torch.zeros(batch_size, args.nclasses).scatter_(1, targets_x.view(-1,1).long(), 1)
 
         if use_cuda:
             targets_x = targets_x.cuda(non_blocking = True)
