@@ -21,8 +21,9 @@ import torch.nn.functional as F
 import models.wideresnet as models
 import dataset.cifar10 as dataset
 import dataset.custom_dataset as custom_ds
-from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig
-from tensorboardX import SummaryWriter
+from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig, confusion_matrix, plot_confusion_matrix, precision_recall
+#from tensorboardX import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
 
 parser = argparse.ArgumentParser(description='PyTorch MixMatch Training')
 # Optimization options
@@ -159,10 +160,21 @@ def get_fnames128():
                 fnames_128[cls].append(fname)
     return fnames_128, classes
 
-def get_labeled_unlabeled():
+def get_labeled_unlabeled(dataset_path):
+    import pickle, os
+
+    save_path = os.path.join(dataset_path, 'lbl_unlbl.pkl')
+
+    if os.path.exists(save_path):
+        print('Labeled Unlabeled exists')
+        save_file = open(save_path, "rb")
+        labeled_fnames, unlabeled_fnames = pickle.load(save_file)
+        return labeled_fnames, unlabeled_fnames
+
+    print('Labeled Unlabeled does not exist')
     fnames_128, classes = get_fnames128()
 
-    n_labeled = 1000
+    n_labeled = 2500
     n_classes = len(classes)
     n_labeled_per_class = int(n_labeled / n_classes)
 
@@ -178,9 +190,13 @@ def get_labeled_unlabeled():
         labeled_fnames[cls] = fnames_128[cls][:n_labeled_per_class]
         unlabeled_fnames.extend(fnames_128[cls][n_labeled_per_class:])
 
+    data = (labeled_fnames, unlabeled_fnames)
+    save_file = open(save_path, "wb")
+    pickle.dump(data, save_file)
+    save_file.close()
+
     return labeled_fnames, unlabeled_fnames
 
-"""
 def get_cifar10_default():
     print(f'==> Preparing cifar10')
     transform_train = transforms.Compose([
@@ -200,7 +216,6 @@ def get_cifar10_default():
     test_loader = data.DataLoader(test_set, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
     return labeled_trainloader, unlabeled_trainloader, val_loader, test_loader
-"""
 
 def get_custom_hardcoded():
     print(f'==> Preparing the custom dataset')
@@ -214,9 +229,9 @@ def get_custom_hardcoded():
         dataset.ToTensor(),
     ])
 
-    labeled_fnames, unlabeled_fnames = get_labeled_unlabeled()
+    labeled_fnames, unlabeled_fnames = get_labeled_unlabeled('./data/animal_dataset')
 
-    train_labeled_set, train_unlabeled_set, val_set, test_set = custom_ds.get_custom(
+    train_labeled_set, train_unlabeled_set, val_set, test_set, class_names = custom_ds.get_custom(
         './data/animal_dataset',
         labeled_fnames,
         unlabeled_fnames, 
@@ -227,7 +242,7 @@ def get_custom_hardcoded():
     val_loader = data.DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=0)
     test_loader = data.DataLoader(test_set, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
-    return labeled_trainloader, unlabeled_trainloader, val_loader, test_loader
+    return labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names
     
 
 def get_wideresnet_models():
@@ -257,7 +272,7 @@ def main():
     #labeled_trainloader, unlabeled_trainloader, val_loader, test_loader = \
     #        get_cifar10_default()
 
-    labeled_trainloader, unlabeled_trainloader, val_loader, test_loader = \
+    labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names = \
             get_custom_hardcoded()
 
     model, ema_model = get_wideresnet_models()
@@ -277,9 +292,10 @@ def main():
         #print('\nEpoch: [%d | %d] LR: %f' % (epoch + 1, args.epochs, args.lr))
 
         train_loss, train_loss_x, train_loss_u = train(labeled_trainloader, unlabeled_trainloader, epoch, use_cuda, ts)
-        _, train_acc = validate(labeled_trainloader, ts.ema_model, ts.criterion, epoch, use_cuda, mode='Train Stats')
-        val_loss, val_acc = validate(val_loader, ts.ema_model, ts.criterion, epoch, use_cuda, mode='Valid Stats')
-        test_loss, test_acc = validate(test_loader, ts.ema_model, ts.criterion, epoch, use_cuda, mode='Test Stats ')
+        _, train_acc, train_confusion = validate(labeled_trainloader, ts.ema_model, ts.criterion, epoch, use_cuda, mode='Train Stats')
+        val_loss, val_acc, val_confusion = validate(val_loader, ts.ema_model, ts.criterion, epoch, use_cuda, mode='Valid Stats')
+        test_loss, test_acc, test_confusion = validate(test_loader, ts.ema_model, ts.criterion, epoch, use_cuda, mode='Test Stats ')
+
 
         step = args.train_iteration * (epoch + 1)
 
@@ -290,6 +306,15 @@ def main():
         writer.add_scalar('accuracy/train_acc', train_acc, step)
         writer.add_scalar('accuracy/val_acc', val_acc, step)
         writer.add_scalar('accuracy/test_acc', test_acc, step)
+
+        img_conf_val = plot_confusion_matrix(val_confusion, class_names)
+        writer.add_image('confusion/val', img_conf_val, step)
+
+        val_pre, val_rec = precision_recall(val_confusion)
+
+        for i in range(len(val_pre)):
+            writer.add_scalar('precision/val/' + class_names[i], val_pre[i], step)
+            writer.add_scalar('recall/val/' + class_names[i], val_rec[i], step)
 
         # append logger file
         ts.logger.append([train_loss, train_loss_x, train_loss_u, val_loss, val_acc, test_loss, test_acc])
@@ -456,53 +481,34 @@ def train(labeled_trainloader, unlabeled_trainloader, epoch, use_cuda,
 
 def validate(valloader, model, criterion, epoch, use_cuda, mode):
 
-    batch_time = AverageMeter()
-    data_time = AverageMeter()
     losses = AverageMeter()
-    top1 = AverageMeter()
-    top5 = AverageMeter()
+    accuracy_meter = AverageMeter()
 
     # switch to evaluate mode
     model.eval()
+    
+    n_classes = args.nclasses
+    confusion = torch.zeros(n_classes, n_classes)
 
     end = time.time()
-    bar = Bar(f'{mode}', max=len(valloader))
     with torch.no_grad():
         for batch_idx, (inputs, targets) in enumerate(valloader):
-            # measure data loading time
-            data_time.update(time.time() - end)
-
             if use_cuda:
                 inputs, targets = inputs.cuda(), targets.cuda(non_blocking=True)
+
             # compute output
             outputs = model(inputs)
             loss = criterion(outputs, targets)
 
             # measure accuracy and record loss
-            prec1, prec5 = accuracy(outputs, targets, topk=(1, 5))
+            #prec1, prec5 = accuracy(outputs, targets, topk=(1, 5))
+            acc = accuracy(outputs, targets)
+            batch_confusion = confusion_matrix(outputs, targets)
+            confusion += batch_confusion
             losses.update(loss.item(), inputs.size(0))
-            top1.update(prec1.item(), inputs.size(0))
-            top5.update(prec5.item(), inputs.size(0))
-
-            # measure elapsed time
-            batch_time.update(time.time() - end)
-            end = time.time()
-
-            # plot progress
-            """bar.suffix  = '({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | top1: {top1: .4f} | top5: {top5: .4f}'.format(
-                        batch=batch_idx + 1,
-                        size=len(valloader),
-                        data=data_time.avg,
-                        bt=batch_time.avg,
-                        total=bar.elapsed_td,
-                        eta=bar.eta_td,
-                        loss=losses.avg,
-                        top1=top1.avg,
-                        top5=top5.avg,
-                        )
-            bar.next()"""
-        bar.finish()
-    return (losses.avg, top1.avg)
+            accuracy_meter.update(acc.item(), inputs.size(0))
+            
+    return (losses.avg, accuracy_meter.avg, confusion)
 
 
 def linear_rampup(current, rampup_length=args.epochs):
