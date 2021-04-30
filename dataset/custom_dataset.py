@@ -12,7 +12,7 @@ from torch.utils.data import Dataset, DataLoader
 def get_custom(root, labeled_fnames, unlabeled_fnames, transform_train=None, 
                 transform_val=None):
     
-    prep = Preprocessor(labeled_fnames, unlabeled_fnames, root=root, overwrite=True, size=32)
+    prep = Preprocessor(labeled_fnames, unlabeled_fnames, root=root, overwrite=False, size=32)
     _, tgts_lab, imgs_unl = prep.load_all()
 
     train_idxs, val_idxs, test_idxs = train_val_test_split(tgts_lab)
@@ -28,7 +28,7 @@ def get_custom(root, labeled_fnames, unlabeled_fnames, transform_train=None,
                                             transform=TransformTwice(transform_train))
 
     print (f"#Labeled: {len(train_idxs)} #Unlabeled: {len(unl_idxs)} #Val: {len(val_idxs)}")
-    return train_labeled_dataset, train_unlabeled_dataset, val_dataset, test_dataset
+    return train_labeled_dataset, train_unlabeled_dataset, val_dataset, test_dataset, prep.get_class_names()
     
 
 def train_val_test_split(labels, ratios=None, seed=42):
@@ -37,7 +37,7 @@ def train_val_test_split(labels, ratios=None, seed=42):
     test_idxs   = []
     
     if ratios is None:
-        ratios = {'train': 0.55, 'val': 0.25, 'test': 0.20}
+        ratios = {'train': 0.20, 'val': 0.40, 'test': 0.40}
         
     assert ratios['train'] > 0 and ratios['val'] > 0 and ratios['train'] + ratios['val'] < 1.0
     
@@ -130,6 +130,7 @@ class Preprocessor:
         
         # define label string to integer conversion
         classes = list(labeled_fnames.keys())
+        self.classes = classes
 
         #print('GOT CLASSES:', classes)
         #for cls in classes:
@@ -229,6 +230,9 @@ class Preprocessor:
         return resize_and_split(img, min_new_info=self.min_new_info,
                                 size=self.size)
         
+    def get_class_names(self):
+        return self.classes
+
     def int_2_str(self, int_label):
         return self._int_2_str[int_label]
     
