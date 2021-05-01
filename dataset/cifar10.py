@@ -2,7 +2,31 @@ import numpy as np
 from PIL import Image
 
 import torchvision
+import torchvision.transforms as transforms
+import torch.utils.data as data
 import torch
+
+def load_cifar10_default(root, batch_size, n_labeled):
+    print(f'==> Preparing cifar10')
+    transform_train = transforms.Compose([
+        RandomPadandCrop(32),
+        RandomFlip(),
+        ToTensor(),
+    ])
+
+    transform_val = transforms.Compose([
+        ToTensor(),
+    ])
+
+    train_labeled_set, train_unlabeled_set, val_set, test_set = get_cifar10(root, n_labeled, transform_train=transform_train, transform_val=transform_val)
+    labeled_trainloader = data.DataLoader(train_labeled_set, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True)
+    unlabeled_trainloader = data.DataLoader(train_unlabeled_set, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True)
+    val_loader = data.DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=0)
+    test_loader = data.DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=0)
+
+    class_names = ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
+
+    return labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names
 
 class TransformTwice:
     def __init__(self, transform):
