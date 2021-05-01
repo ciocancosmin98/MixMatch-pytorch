@@ -6,13 +6,43 @@ import numpy as np
 import torchvision
 import random
 import sys
+import dataset.cifar10 as dataset
+import torchvision.transforms as transforms
+import torch.utils.data as data
 
 from torch.utils.data import Dataset, DataLoader
 
-def get_custom(root, labeled_fnames, unlabeled_fnames, transform_train=None, 
+def load_custom(labeled_fnames, unlabeled_fnames, batch_size, save_dir):
+    print(f'==> Preparing the custom dataset')
+    transform_train = transforms.Compose([
+        dataset.RandomPadandCrop(32),
+        dataset.RandomFlip(),
+        dataset.ToTensor(),
+    ])
+
+    transform_val = transforms.Compose([
+        dataset.ToTensor(),
+    ])
+
+
+    train_labeled_set, train_unlabeled_set, val_set, test_set, class_names = get_custom(
+        save_dir,
+        labeled_fnames,
+        unlabeled_fnames, 
+        transform_train=transform_train,
+        transform_val=transform_val)
+    labeled_trainloader = data.DataLoader(train_labeled_set, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True)
+    unlabeled_trainloader = data.DataLoader(train_unlabeled_set, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True)
+    val_loader = data.DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=0)
+    test_loader = data.DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=0)
+
+    return labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names
+    
+
+def get_custom(save_dir, labeled_fnames, unlabeled_fnames, transform_train=None, 
                 transform_val=None):
     
-    prep = Preprocessor(labeled_fnames, unlabeled_fnames, root=root, overwrite=False, size=32)
+    prep = Preprocessor(labeled_fnames, unlabeled_fnames, save_dir=save_dir, overwrite=False, size=32)
     _, tgts_lab, imgs_unl = prep.load_all()
 
     train_idxs, val_idxs, test_idxs = train_val_test_split(tgts_lab)
@@ -122,11 +152,11 @@ class CustomDataset(Dataset):
         return img, target
 
 class Preprocessor:
-    def __init__(self, labeled_fnames, unlabeled_fnames, root='.', size=32,
+    def __init__(self, labeled_fnames, unlabeled_fnames, save_dir='.', size=32,
                     min_new_info=0.4, overwrite=False):
         
         assert (min_new_info >= 0 and min_new_info <= 1)
-        assert (os.path.exists(root))
+        assert (os.path.exists(save_dir))
         
         # define label string to integer conversion
         classes = list(labeled_fnames.keys())
@@ -142,7 +172,7 @@ class Preprocessor:
         self.labeled_fnames   = labeled_fnames
         self.unlabeled_fnames = unlabeled_fnames
         
-        self.root = root
+        self.save_dir = save_dir
         self.size = size
         self.min_new_info = min_new_info
         self.overwrite = overwrite 
@@ -150,7 +180,7 @@ class Preprocessor:
         self._preprocess()
         
     def _preprocess(self):
-        self.savepath = os.path.join(self.root, "preproc.npz")
+        self.savepath = os.path.join(self.save_dir, "preproc.npz")
         if os.path.exists(self.savepath) and not self.overwrite:
             print('Skipping preprocessing... (found saved file)')
             npzfile = np.load(self.savepath)
@@ -270,3 +300,88 @@ def resize_and_split(img, careful=True, max_aspect_ratio=3, min_new_info=0.2, si
         add_img(result_imgs, start_x, start_y)
     
     return result_imgs
+
+
+def get_filenames(dataset_path):
+    dataset_path = os.path.join(dataset_path, 'images')
+
+    filenames = {}
+    classes = os.listdir(dataset_path)
+
+    assert (isinstance(classes, list) and len(classes) > 0)
+
+    for cls in classes:
+        filenames[cls] = []
+        
+        path_to_class = os.path.join(dataset_path, cls)
+        class_fnames = os.listdir(path_to_class)
+
+        assert (isinstance(class_fnames, list) and len(class_fnames) > 0)
+
+        for fname in class_fnames:
+            filenames[cls].append(os.path.join(path_to_class, fname))
+
+    return filenames, classes
+
+def get_fnames128(dataset_path):
+    fnames_128 = {}
+
+    filenames, classes = get_filenames(dataset_path)
+
+    for cls in filenames:
+        fnames_128[cls] = []
+        for fname in filenames[cls]:
+            try:
+                img = cv2.imread(fname)
+            except:
+                print('EXCEPTION READING')
+                continue
+                
+            if img is None:
+                print('IMG IS NONE')
+                continue
+                
+            height, width = img.shape[0], img.shape[1]
+            if height >= 128 and width >= 128:
+                fnames_128[cls].append(fname)
+
+    return fnames_128, classes
+
+def get_labeled_unlabeled(dataset_name, session_path):
+    import pickle, os
+
+    dataset_path = os.path.join('data', dataset_name)
+    save_path = os.path.join(session_path, 'lbl_unlbl.pkl')
+
+    if os.path.exists(save_path):
+        print('==> Loading list of labeled and unlabeled data from memory')
+        save_file = open(save_path, "rb")
+        labeled_fnames, unlabeled_fnames = pickle.load(save_file)
+        return labeled_fnames, unlabeled_fnames
+
+    print('==> Calculating list of labeled and unlabeled data')
+
+    fnames_128, classes = get_fnames128(dataset_path)
+
+    n_labeled = 2500
+    n_classes = len(classes)
+    n_labeled_per_class = int(n_labeled / n_classes)
+
+    seed = 42
+    random.seed(seed)
+
+    unlabeled_fnames = []
+    labeled_fnames = {}
+
+    for cls in fnames_128:
+        random.shuffle(fnames_128[cls])
+        
+        labeled_fnames[cls] = fnames_128[cls][:n_labeled_per_class]
+        unlabeled_fnames.extend(fnames_128[cls][n_labeled_per_class:])
+
+    data = (labeled_fnames, unlabeled_fnames)
+    save_file = open(save_path, "wb")
+    pickle.dump(data, save_file)
+    save_file.close()
+
+    return labeled_fnames, unlabeled_fnames
