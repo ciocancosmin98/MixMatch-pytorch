@@ -2,7 +2,6 @@ from __future__ import print_function
 
 import argparse
 import os
-import shutil
 import time
 import random
 
@@ -10,22 +9,36 @@ import numpy as np
 import cv2
 
 import torch
-import torch.nn as nn
 import torch.nn.parallel
 import torch.backends.cudnn as cudnn
-import torch.optim as optim
 import torch.utils.data as data
 import torchvision.transforms as transforms
-import torch.nn.functional as F
 
 import models.wideresnet as models
 import dataset.cifar10 as dataset
 import dataset.custom_dataset as custom_ds
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig, confusion_matrix, plot_confusion_matrix, precision_recall
-#from tensorboardX import SummaryWriter
-from torch.utils.tensorboard import SummaryWriter
+
+from session import SessionManager
+
+def str_2_bool(s):
+    if not isinstance(s, str):
+        raise TypeError('Trying to convert arbitrary object to boolean.')
+    
+    s = s.lower()
+
+    tlist = ['true',  't', '1', 'yes', 'y']
+    flist = ['false', 'f', '0', 'no',  'n']
+    if s in tlist:
+        return True
+    
+    if s in flist:
+        return False
+
+    raise argparse.ArgumentTypeError('Expected boolean value.')
 
 parser = argparse.ArgumentParser(description='PyTorch MixMatch Training')
+
 # Optimization options
 parser.add_argument('--epochs', default=1024, type=int, metavar='N',
                     help='number of total epochs to run')
@@ -35,221 +48,42 @@ parser.add_argument('--batch-size', default=64, type=int, metavar='N',
                     help='train batchsize')
 parser.add_argument('--lr', '--learning-rate', default=0.002, type=float,
                     metavar='LR', help='initial learning rate')
-# Checkpoints
-parser.add_argument('--resume', default='', type=str, metavar='PATH',
-                    help='path to latest checkpoint (default: none)')
+
 # Miscs
 parser.add_argument('--manualSeed', type=int, default=0, help='manual seed')
+
 #Device options
 parser.add_argument('--gpu', default='0', type=str,
                     help='id(s) for CUDA_VISIBLE_DEVICES')
-#Method options
+# Method options
 parser.add_argument('--n-labeled', type=int, default=250,
                         help='Number of labeled data')
 parser.add_argument('--train-iteration', type=int, default=1024,
                         help='Number of iteration per epoch')
-parser.add_argument('--out', default='result',
-                        help='Directory to output the result')
-parser.add_argument('--nclasses', type=int, default='10',
-                        help='Number of classes to train on')
 parser.add_argument('--alpha', default=0.75, type=float)
 parser.add_argument('--lambda-u', default=75, type=float)
 parser.add_argument('--T', default=0.5, type=float)
 parser.add_argument('--ema-decay', default=0.999, type=float)
+parser.add_argument('--enable-mixmatch', default=True, type=str_2_bool)
 
+# Dataset options
+parser.add_argument('--dataset-name', default='animals10', type=str, metavar='NAME',
+                    help='name of the dataset')
+parser.add_argument('--session-id', default=-1, type=int, metavar='ID',
+                    help='the id of the session to be resumed')
 
 args = parser.parse_args()
-state = {k: v for k, v in args._get_kwargs()}
-
-# Use CUDA
-os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
-use_cuda = torch.cuda.is_available()
 
 # Random seed
 if args.manualSeed is None:
     args.manualSeed = random.randint(1, 10000)
 np.random.seed(args.manualSeed)
 
-class TrainState:
-    def __init__(self, model, ema_model):
-        self.best_acc = 0
-        self.start_epoch = 0
-        self.model = model
-        self.ema_model = ema_model
-        
-        self.train_criterion = SemiLoss()
-        self.criterion = MyCrossEntropy()
-        self.optimizer = optim.Adam(model.parameters(), lr=args.lr)
-        self.ema_optimizer = WeightEMA(model, ema_model, alpha=args.ema_decay)
-
-
-    def handle_resume(self):
-        title = 'noisy-cifar-10'
-        if args.resume:
-            # Load checkpoint.
-            print('==> Resuming from checkpoint..')
-            assert os.path.isfile(args.resume), 'Error: no checkpoint directory found!'
-            args.out = os.path.dirname(args.resume)
-            checkpoint = torch.load(args.resume)
-            self.best_acc = checkpoint['best_acc']
-            self.start_epoch = checkpoint['epoch']
-            self.model.load_state_dict(checkpoint['state_dict'])
-            self.ema_model.load_state_dict(checkpoint['ema_state_dict'])
-            self.optimizer.load_state_dict(checkpoint['optimizer'])
-            self.logger = Logger(os.path.join(args.out, 'log.txt'), title=title, resume=True)
-        else:
-            self.logger = Logger(os.path.join(args.out, 'log.txt'), title=title)
-            self.logger.set_names(['Train Loss', 'Train Loss X', 'Train Loss U',  'Valid Loss', 'Valid Acc.', 'Test Loss', 'Test Acc.'])
-
-    def save_checkpoint(self, val_acc, epoch):
-        is_best = val_acc > self.best_acc
-        self.best_acc = max(val_acc, self.best_acc)
-        state = {
-            'epoch': epoch + 1,
-            'state_dict': self.model.state_dict(),
-            'ema_state_dict': self.ema_model.state_dict(),
-            'acc': val_acc,
-            'best_acc': self.best_acc,
-            'optimizer' : self.optimizer.state_dict(),
-        }
-        checkpoint = args.out
-        filename = 'checkpoint.pth.tar'
-
-        filepath = os.path.join(checkpoint, filename)
-        torch.save(state, filepath)
-        if is_best:
-            shutil.copyfile(filepath, os.path.join(checkpoint, 'model_best.pth.tar'))
-
-class MyCrossEntropy(nn.CrossEntropyLoss):
-    def forward(self, _input, target):
-        target = target.long()
-        return F.cross_entropy(_input, target, weight=self.weight, ignore_index=self.ignore_index, reduction=self.reduction)
-
-def get_filenames(img_dir='data\\animal_dataset\\images'):
-    filenames = {}
-    classes = os.listdir(img_dir)
-    for cls in classes:
-        filenames[cls] = []
-        
-        path_to_class = os.path.join(img_dir, cls)
-        for fname in os.listdir(path_to_class):
-            filenames[cls].append(os.path.join(path_to_class, fname))
-
-    return filenames, classes
-
-def get_fnames128():
-    fnames_128 = {}
-
-    filenames, classes = get_filenames()
-
-    for cls in filenames:
-        fnames_128[cls] = []
-        for fname in filenames[cls]:
-            try:
-                img = cv2.imread(fname)
-            except:
-                print('EXCEPTION READING')
-                continue
-                
-            if img is None:
-                print('IMG IS NONE')
-                continue
-                
-            height, width = img.shape[0], img.shape[1]
-            if height >= 128 and width >= 128:
-                fnames_128[cls].append(fname)
-    return fnames_128, classes
-
-def get_labeled_unlabeled(dataset_path):
-    import pickle, os
-
-    save_path = os.path.join(dataset_path, 'lbl_unlbl.pkl')
-
-    if os.path.exists(save_path):
-        print('Labeled Unlabeled exists')
-        save_file = open(save_path, "rb")
-        labeled_fnames, unlabeled_fnames = pickle.load(save_file)
-        return labeled_fnames, unlabeled_fnames
-
-    print('Labeled Unlabeled does not exist')
-    fnames_128, classes = get_fnames128()
-
-    n_labeled = 2500
-    n_classes = len(classes)
-    n_labeled_per_class = int(n_labeled / n_classes)
-
-    seed = 42
-    random.seed(seed)
-
-    unlabeled_fnames = []
-    labeled_fnames = {}
-
-    for cls in fnames_128:
-        random.shuffle(fnames_128[cls])
-        
-        labeled_fnames[cls] = fnames_128[cls][:n_labeled_per_class]
-        unlabeled_fnames.extend(fnames_128[cls][n_labeled_per_class:])
-
-    data = (labeled_fnames, unlabeled_fnames)
-    save_file = open(save_path, "wb")
-    pickle.dump(data, save_file)
-    save_file.close()
-
-    return labeled_fnames, unlabeled_fnames
-
-def get_cifar10_default():
-    print(f'==> Preparing cifar10')
-    transform_train = transforms.Compose([
-        dataset.RandomPadandCrop(32),
-        dataset.RandomFlip(),
-        dataset.ToTensor(),
-    ])
-
-    transform_val = transforms.Compose([
-        dataset.ToTensor(),
-    ])
-
-    train_labeled_set, train_unlabeled_set, val_set, test_set = dataset.get_cifar10('./data', args.n_labeled, transform_train=transform_train, transform_val=transform_val)
-    labeled_trainloader = data.DataLoader(train_labeled_set, batch_size=args.batch_size, shuffle=True, num_workers=0, drop_last=True)
-    unlabeled_trainloader = data.DataLoader(train_unlabeled_set, batch_size=args.batch_size, shuffle=True, num_workers=0, drop_last=True)
-    val_loader = data.DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=0)
-    test_loader = data.DataLoader(test_set, batch_size=args.batch_size, shuffle=False, num_workers=0)
-
-    return labeled_trainloader, unlabeled_trainloader, val_loader, test_loader
-
-def get_custom_hardcoded():
-    print(f'==> Preparing the custom dataset')
-    transform_train = transforms.Compose([
-        dataset.RandomPadandCrop(32),
-        dataset.RandomFlip(),
-        dataset.ToTensor(),
-    ])
-
-    transform_val = transforms.Compose([
-        dataset.ToTensor(),
-    ])
-
-    labeled_fnames, unlabeled_fnames = get_labeled_unlabeled('./data/animal_dataset')
-
-    train_labeled_set, train_unlabeled_set, val_set, test_set, class_names = custom_ds.get_custom(
-        './data/animal_dataset',
-        labeled_fnames,
-        unlabeled_fnames, 
-        transform_train=transform_train,
-        transform_val=transform_val)
-    labeled_trainloader = data.DataLoader(train_labeled_set, batch_size=args.batch_size, shuffle=True, num_workers=0, drop_last=True)
-    unlabeled_trainloader = data.DataLoader(train_unlabeled_set, batch_size=args.batch_size, shuffle=True, num_workers=0, drop_last=True)
-    val_loader = data.DataLoader(val_set, batch_size=args.batch_size, shuffle=False, num_workers=0)
-    test_loader = data.DataLoader(test_set, batch_size=args.batch_size, shuffle=False, num_workers=0)
-
-    return labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names
-    
-
-def get_wideresnet_models():
+def get_wideresnet_models(n_classes):
     print("==> creating WRN-28-2")
 
     def create_model(ema=False):
-        model = models.WideResNet(num_classes=args.nclasses)
+        model = models.WideResNet(num_classes=n_classes)
         model = model.cuda()
 
         if ema:
@@ -260,77 +94,40 @@ def get_wideresnet_models():
 
     model = create_model()
     ema_model = create_model(ema=True)
+
+    print('    Total params: %.2fM' % (sum(p.numel() for p in model.parameters())/1000000.0))
     return model, ema_model
 
 def main():
+    global constants
     # enable cudnn auto-tuner to find the best algorithm for the given harware
     cudnn.benchmark = True
 
-    if not os.path.isdir(args.out):
-        mkdir_p(args.out)
+    sm = SessionManager(dataset_name=args.dataset_name, resume_id=args.session_id)
+    constants = sm.load_constants(args)
+    
+    labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names = sm.load_dataset(constants['batch_size'], constants['n_labeled'])
 
-    #labeled_trainloader, unlabeled_trainloader, val_loader, test_loader = \
-    #        get_cifar10_default()
+    model, ema_model = get_wideresnet_models(len(class_names))
 
-    labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names = \
-            get_custom_hardcoded()
+    ts, writer = sm.load_checkpoint(model, ema_model, class_names, constants['lr'], constants['ema_decay'], constants['lambda_u'], constants['epochs'])
 
-    model, ema_model = get_wideresnet_models()
-    ts = TrainState(model, ema_model)
-
-    print('    Total params: %.2fM' % (sum(p.numel() for p in model.parameters())/1000000.0))
-
-    ts.handle_resume()
-
-    writer = SummaryWriter(args.out)
     step = 0
-    test_accs = []
     # Train and val
-    for epoch in range(ts.start_epoch, args.epochs):
+    for epoch in range(ts.start_epoch, constants['epochs']):
+        print('\nEpoch: [%d | %d]' % (epoch + 1, constants['epochs']))
+        step = constants['train_iteration'] * (epoch + 1)
 
-        print('\nEpoch: [%d | %d] LR: %f' % (epoch + 1, args.epochs, state['lr']))
-        #print('\nEpoch: [%d | %d] LR: %f' % (epoch + 1, args.epochs, args.lr))
+        train_loss, train_loss_x, train_loss_u = train(labeled_trainloader, unlabeled_trainloader, epoch, ts)
 
-        train_loss, train_loss_x, train_loss_u = train(labeled_trainloader, unlabeled_trainloader, epoch, use_cuda, ts)
-        _, train_acc, train_confusion = validate(labeled_trainloader, ts.ema_model, ts.criterion, epoch, use_cuda, mode='Train Stats')
-        val_loss, val_acc, val_confusion = validate(val_loader, ts.ema_model, ts.criterion, epoch, use_cuda, mode='Valid Stats')
-        test_loss, test_acc, test_confusion = validate(test_loader, ts.ema_model, ts.criterion, epoch, use_cuda, mode='Test Stats ')
+        losses, accs, confs, names = validate_all(labeled_trainloader, val_loader, test_loader, train_loss, ts)
 
+        tensorboard_write(writer, losses, accs, confs, names, class_names, step)
 
-        step = args.train_iteration * (epoch + 1)
+        # save model and other training variables
+        sm.save_checkpoint(accs[names['validation']], epoch)
 
-        writer.add_scalar('losses/train_loss', train_loss, step)
-        writer.add_scalar('losses/valid_loss', val_loss, step)
-        writer.add_scalar('losses/test_loss', test_loss, step)
-
-        writer.add_scalar('accuracy/train_acc', train_acc, step)
-        writer.add_scalar('accuracy/val_acc', val_acc, step)
-        writer.add_scalar('accuracy/test_acc', test_acc, step)
-
-        img_conf_val = plot_confusion_matrix(val_confusion, class_names)
-        writer.add_image('confusion/val', img_conf_val, step)
-
-        val_pre, val_rec = precision_recall(val_confusion)
-
-        for i in range(len(val_pre)):
-            writer.add_scalar('precision/val/' + class_names[i], val_pre[i], step)
-            writer.add_scalar('recall/val/' + class_names[i], val_rec[i], step)
-
-        # append logger file
-        ts.logger.append([train_loss, train_loss_x, train_loss_u, val_loss, val_acc, test_loss, test_acc])
-
-        # save model
-        ts.save_checkpoint(val_acc, epoch)
-        test_accs.append(test_acc)
-
-    ts.logger.close()
-    writer.close()
-
-    print('Best acc:')
-    print(ts.best_acc)
-
-    print('Mean acc:')
-    print(np.mean(test_accs[-20:]))
+    sm.close()
 
 def iterate_with_restart(loader, iterator):
     try:
@@ -348,7 +145,7 @@ def guess_labels(inputs_u1, inputs_u2, model):
         outputs_u1 = model(inputs_u1)
         outputs_u2 = model(inputs_u2)
         p = (torch.softmax(outputs_u1, dim=1) + torch.softmax(outputs_u2, dim=1)) / 2
-        pt = p**(1/args.T)
+        pt = p**(1/constants['T'])
         targets_u = pt / pt.sum(dim=1, keepdim=True)
         targets_u = targets_u.detach()
 
@@ -358,7 +155,7 @@ def mixup(inputs_x, inputs_u1, inputs_u2, targets_x, targets_u):
     all_inputs = torch.cat([inputs_x, inputs_u1, inputs_u2], dim=0)
     all_targets = torch.cat([targets_x, targets_u, targets_u], dim=0)
 
-    l = np.random.beta(args.alpha, args.alpha)
+    l = np.random.beta(constants['alpha'], constants['alpha'])
 
     l = max(l, 1-l)
 
@@ -375,7 +172,7 @@ def mixup(inputs_x, inputs_u1, inputs_u2, targets_x, targets_u):
 def predict_train(model, mixed_input):
     # interleave labeled and unlabed samples between batches to 
     # get correct batchnorm calculation 
-    batch_size = args.batch_size
+    batch_size = constants['batch_size']
 
     mixed_input = list(torch.split(mixed_input, batch_size))
     mixed_input = interleave(mixed_input, batch_size)
@@ -391,7 +188,7 @@ def predict_train(model, mixed_input):
 
     return logits_x, logits_u
 
-def train(labeled_trainloader, unlabeled_trainloader, epoch, use_cuda, 
+def train(labeled_trainloader, unlabeled_trainloader, epoch, 
         train_state):
     model = train_state.model
     optimizer = train_state.optimizer
@@ -406,18 +203,20 @@ def train(labeled_trainloader, unlabeled_trainloader, epoch, use_cuda,
     ws = AverageMeter()
     end = time.time()
 
-    bar = Bar('Training', max=args.train_iteration)
+    n_classes = len(train_state.class_names)
+
+    bar = Bar('Training', max=constants['train_iteration'])
     labeled_train_iter = iter(labeled_trainloader)
     unlabeled_train_iter = iter(unlabeled_trainloader)
 
     model.train()
-    for batch_idx in range(args.train_iteration):
+    for batch_idx in range(constants['train_iteration']):
         labeled_train_iter, inputs_x, targets_x = \
             iterate_with_restart(labeled_trainloader, labeled_train_iter)
         unlabeled_train_iter, (inputs_u1, inputs_u2), _ = \
             iterate_with_restart(unlabeled_trainloader, unlabeled_train_iter)
 
-        if use_cuda:
+        if constants['use_cuda']:
             inputs_x  = inputs_x.cuda(non_blocking = True)
             inputs_u1 = inputs_u1.cuda(non_blocking = True)
             inputs_u2 = inputs_u2.cuda(non_blocking = True)
@@ -428,9 +227,9 @@ def train(labeled_trainloader, unlabeled_trainloader, epoch, use_cuda,
         batch_size = inputs_x.size(0)
 
         # Transform label to one-hot
-        targets_x = torch.zeros(batch_size, args.nclasses).scatter_(1, targets_x.view(-1,1).long(), 1)
+        targets_x = torch.zeros(batch_size, n_classes).scatter_(1, targets_x.view(-1,1).long(), 1)
 
-        if use_cuda:
+        if constants['use_cuda']:
             targets_x = targets_x.cuda(non_blocking = True)
 
         targets_u = guess_labels(inputs_u1, inputs_u2, model)
@@ -442,7 +241,7 @@ def train(labeled_trainloader, unlabeled_trainloader, epoch, use_cuda,
 
         Lx, Lu, w = criterion(logits_x, mixed_target[:batch_size], 
                             logits_u, mixed_target[batch_size:], 
-                            epoch+batch_idx/args.train_iteration)
+                            epoch+batch_idx/constants['train_iteration'])
         loss = Lx + w * Lu
 
         # record loss
@@ -464,7 +263,7 @@ def train(labeled_trainloader, unlabeled_trainloader, epoch, use_cuda,
         # plot progress
         bar.suffix  = '({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f} | Loss_x: {loss_x:.4f} | Loss_u: {loss_u:.4f} | W: {w:.4f}'.format(
                     batch=batch_idx + 1,
-                    size=args.train_iteration,
+                    size=constants['train_iteration'],
                     data=data_time.avg,
                     bt=batch_time.avg,
                     total=bar.elapsed_td,
@@ -479,7 +278,36 @@ def train(labeled_trainloader, unlabeled_trainloader, epoch, use_cuda,
 
     return (losses.avg, losses_x.avg, losses_u.avg,)
 
-def validate(valloader, model, criterion, epoch, use_cuda, mode):
+def tensorboard_write(writer, losses, accs, confs, set_names, class_names, step):
+    for loss, acc, name in zip(losses, accs, set_names):
+        writer.add_scalar('losses/' + name + '_loss', loss, step)
+        writer.add_scalar('accuracy/' + name + '_acc', acc, step)
+
+    img_conf_val = plot_confusion_matrix(confs[set_names['validation']], class_names)
+    writer.add_image('confusion/val', img_conf_val, step)
+
+    val_pre, val_rec = precision_recall(confs[set_names['validation']])
+
+    for i in range(len(val_pre)):
+        writer.add_scalar('precision/val/' + class_names[i], val_pre[i], step)
+        writer.add_scalar('recall/val/' + class_names[i], val_rec[i], step)
+
+def validate_all(train_loader, val_loader, test_loader, train_loss, train_state):
+    _, train_acc, train_confusion = validate(train_loader, train_state)
+    val_loss, val_acc, val_confusion = validate(val_loader, train_state)
+    test_loss, test_acc, test_confusion = validate(test_loader, train_state)
+
+    losses = [train_loss, val_loss, test_loss]
+    accs   = [train_acc, val_acc, test_acc]
+    confs  = [train_confusion, val_confusion, test_confusion]
+    names  = {'training' : 0, 'validation' : 1, 'testing' : 2}
+
+    return losses, accs, confs, names
+
+def validate(valloader, train_state):
+
+    model = train_state.ema_model
+    criterion = train_state.criterion
 
     losses = AverageMeter()
     accuracy_meter = AverageMeter()
@@ -487,13 +315,13 @@ def validate(valloader, model, criterion, epoch, use_cuda, mode):
     # switch to evaluate mode
     model.eval()
     
-    n_classes = args.nclasses
+    n_classes = len(train_state.class_names)
     confusion = torch.zeros(n_classes, n_classes)
 
     end = time.time()
     with torch.no_grad():
         for batch_idx, (inputs, targets) in enumerate(valloader):
-            if use_cuda:
+            if constants['use_cuda']:
                 inputs, targets = inputs.cuda(), targets.cuda(non_blocking=True)
 
             # compute output
@@ -501,7 +329,6 @@ def validate(valloader, model, criterion, epoch, use_cuda, mode):
             loss = criterion(outputs, targets)
 
             # measure accuracy and record loss
-            #prec1, prec5 = accuracy(outputs, targets, topk=(1, 5))
             acc = accuracy(outputs, targets)
             batch_confusion = confusion_matrix(outputs, targets)
             confusion += batch_confusion
@@ -509,44 +336,6 @@ def validate(valloader, model, criterion, epoch, use_cuda, mode):
             accuracy_meter.update(acc.item(), inputs.size(0))
             
     return (losses.avg, accuracy_meter.avg, confusion)
-
-
-def linear_rampup(current, rampup_length=args.epochs):
-    if rampup_length == 0:
-        return 1.0
-    else:
-        current = np.clip(current / rampup_length, 0.0, 1.0)
-        return float(current)
-
-class SemiLoss(object):
-    def __call__(self, outputs_x, targets_x, outputs_u, targets_u, epoch):
-        probs_u = torch.softmax(outputs_u, dim=1)
-
-        Lx = -torch.mean(torch.sum(F.log_softmax(outputs_x, dim=1) * targets_x, dim=1))
-        Lu = torch.mean((probs_u - targets_u)**2)
-
-        return Lx, Lu, args.lambda_u * linear_rampup(epoch)
-
-class WeightEMA(object):
-    def __init__(self, model, ema_model, alpha=0.999):
-        self.model = model
-        self.ema_model = ema_model
-        self.alpha = alpha
-        self.params = list(model.state_dict().values())
-        self.ema_params = list(ema_model.state_dict().values())
-        self.wd = 0.02 * args.lr
-
-        for param, ema_param in zip(self.params, self.ema_params):
-            param.data.copy_(ema_param.data)
-
-    def step(self):
-        one_minus_alpha = 1.0 - self.alpha
-        for param, ema_param in zip(self.params, self.ema_params):
-            if ema_param.dtype==torch.float32:
-                ema_param.mul_(self.alpha)
-                ema_param.add_(param * one_minus_alpha)
-                # customized weight decay
-                param.mul_(1 - self.wd)
 
 def interleave_offsets(batch, nu):
     groups = [batch // (nu + 1)] * (nu + 1)
