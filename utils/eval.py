@@ -8,24 +8,6 @@ import io
 
 __all__ = ['accuracy', 'confusion_matrix', 'plot_confusion_matrix', 'precision_recall']
 
-
-"""
-def accuracy(output, target, topk=(1,)):
-    maxk = max(topk)
-    batch_size = target.size(0)
-
-    _, pred = output.topk(maxk, 1, True, True)
-    pred = pred.t()
-    target = target.long()
-    correct = pred.eq(target.view(1, -1).expand_as(pred))
-
-    res = []
-    for k in topk:
-        correct_k = correct[:k].contiguous().view(-1).float().sum(0)
-        res.append(correct_k.mul_(100.0 / batch_size))
-    return res
-"""
-
 def accuracy(outputs, targets):
     batch_size = targets.size(0)
 
