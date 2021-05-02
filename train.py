@@ -58,8 +58,6 @@ parser.add_argument('--gpu', default='0', type=str,
 # Method options
 parser.add_argument('--n-labeled', type=int, default=250,
                         help='Number of labeled data')
-parser.add_argument('--train-iteration', type=int, default=1024,
-                        help='Number of iteration per epoch')
 parser.add_argument('--alpha', default=0.75, type=float)
 parser.add_argument('--lambda-u', default=75, type=float)
 parser.add_argument('--T', default=0.5, type=float)
@@ -104,9 +102,9 @@ def main():
     cudnn.benchmark = True
 
     sm = SessionManager(dataset_name=args.dataset_name, resume_id=args.session_id)
-    constants = sm.load_constants(args)
     
-    labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names = sm.load_dataset(constants['batch_size'], constants['n_labeled'])
+    labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names, constants = \
+            sm.load_dataset(args)
 
     model, ema_model = get_wideresnet_models(len(class_names))
 
@@ -118,7 +116,10 @@ def main():
         print('\nEpoch: [%d | %d]' % (epoch + 1, constants['epochs']))
         step = constants['train_iteration'] * (epoch + 1)
 
-        train_loss, train_loss_x, train_loss_u = train(labeled_trainloader, unlabeled_trainloader, epoch, ts)
+        if constants['enable_mixmatch']:
+            train_loss = train(labeled_trainloader, unlabeled_trainloader, epoch, ts)
+        else:
+            train_loss = train_supervised(labeled_trainloader, epoch, ts)
 
         losses, accs, confs, names = validate_all(labeled_trainloader, val_loader, test_loader, train_loss, ts)
 
@@ -188,8 +189,7 @@ def predict_train(model, mixed_input):
 
     return logits_x, logits_u
 
-def train(labeled_trainloader, unlabeled_trainloader, epoch, 
-        train_state):
+def train(labeled_trainloader, unlabeled_trainloader, epoch, train_state):
     model = train_state.model
     optimizer = train_state.optimizer
     ema_optimizer = train_state.ema_optimizer
@@ -276,7 +276,81 @@ def train(labeled_trainloader, unlabeled_trainloader, epoch,
         bar.next()
     bar.finish()
 
-    return (losses.avg, losses_x.avg, losses_u.avg,)
+    return losses.avg
+
+def train_supervised(labeled_trainloader, epoch, train_state):
+    model = train_state.model
+    optimizer = train_state.optimizer
+    ema_optimizer = train_state.ema_optimizer
+    criterion = train_state.train_criterion
+
+    batch_time = AverageMeter()
+    data_time = AverageMeter()
+    losses = AverageMeter()
+    end = time.time()
+
+    n_classes = len(train_state.class_names)
+
+    bar = Bar('Training', max=constants['train_iteration'])
+    labeled_train_iter = iter(labeled_trainloader)
+
+    model.train()
+    for batch_idx in range(constants['train_iteration']):
+        labeled_train_iter, inputs_x, targets_x = \
+            iterate_with_restart(labeled_trainloader, labeled_train_iter)
+
+        if constants['use_cuda']:
+            inputs_x  = inputs_x.cuda(non_blocking = True)
+
+        # measure data loading time
+        data_time.update(time.time() - end)
+
+        batch_size = inputs_x.size(0)
+
+        # Transform label to one-hot
+        targets_x = torch.zeros(batch_size, n_classes).scatter_(1, targets_x.view(-1,1).long(), 1)
+
+        if constants['use_cuda']:
+            targets_x = targets_x.cuda(non_blocking = True)
+
+        mixed_input, mixed_target = mixup(inputs_x, inputs_x, inputs_x,
+                                        targets_x, targets_x)
+        
+        inputs  = mixed_input[:batch_size]
+        targets = mixed_target[:batch_size] 
+        logits  = model(inputs)
+
+        Lx, _, _ = criterion(logits, targets, logits, targets, 
+                            epoch+batch_idx/constants['train_iteration'])
+        loss = Lx
+
+        # record loss
+        losses.update(loss.item(), inputs_x.size(0))
+
+        # compute gradient and do SGD step
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        ema_optimizer.step()
+
+        # measure elapsed time
+        batch_time.update(time.time() - end)
+        end = time.time()
+
+        # plot progress
+        bar.suffix  = '({batch}/{size}) Data: {data:.3f}s | Batch: {bt:.3f}s | Total: {total:} | ETA: {eta:} | Loss: {loss:.4f}'.format(
+                    batch=batch_idx + 1,
+                    size=constants['train_iteration'],
+                    data=data_time.avg,
+                    bt=batch_time.avg,
+                    total=bar.elapsed_td,
+                    eta=bar.eta_td,
+                    loss=losses.avg,
+                    )
+        bar.next()
+    bar.finish()
+
+    return losses.avg
 
 def tensorboard_write(writer, losses, accs, confs, set_names, class_names, step):
     for loss, acc, name in zip(losses, accs, set_names):

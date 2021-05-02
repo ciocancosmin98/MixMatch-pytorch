@@ -171,18 +171,46 @@ class SessionManager:
         
         return constants
 
+    def add_constant(self, name, value):
+        const_path = os.path.join(self.spath, 'const.pth.tar')
 
-    def load_dataset(self, batch_size, n_labeled=500):
+        constants = load(const_path)
+        constants[name] = value
+        save(constants, const_path)
+
+        return constants
+
+
+    def load_dataset(self, args):
+        constants = self.load_constants(args)
+        batch_size = constants['batch_size']
+        n_labeled  = constants['n_labeled']
+
         if self.dname == "cifar10":
             # load cifar-10
 
             cifar_dir = os.path.join(self.droot, 'cifar10')
-            return cifar10.load_cifar10_default(cifar_dir, batch_size, n_labeled)
+            labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names = \
+                    cifar10.load_cifar10_default(cifar_dir, batch_size, n_labeled)
         else:
             # load custom dataset
             labeled_fnames, unlabeled_fnames = cds.get_labeled_unlabeled(self.dname, self.pdir)
 
-            return cds.load_custom(labeled_fnames, unlabeled_fnames, batch_size, self.pdir)
+            labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names = \
+                    cds.load_custom(labeled_fnames, unlabeled_fnames, batch_size, self.pdir)
+
+        if not 'train_iteration' in constants:
+            min_iterations = 32
+
+            if not constants['enable_mixmatch']:
+                train_iteration = max(len(labeled_trainloader), min_iterations)
+            else:
+                train_iteration = max(max(len(labeled_trainloader), len(unlabeled_trainloader)), min_iterations)
+            
+            train_iteration += 5
+            constants = self.add_constant('train_iteration', train_iteration)
+
+        return labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names, constants
 
     def load_checkpoint(self, model, ema_model, class_names, lr, alpha, lambda_u, n_epochs):
         self.ts = TrainState(model, ema_model, class_names, lr, alpha, lambda_u, n_epochs, self.spath)
