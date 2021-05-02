@@ -192,12 +192,18 @@ class SessionManager:
             cifar_dir = os.path.join(self.droot, 'cifar10')
             labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names = \
                     cifar10.load_cifar10_default(cifar_dir, batch_size, n_labeled)
+
+            prep = None
         else:
             # load custom dataset
-            labeled_fnames, unlabeled_fnames = cds.get_labeled_unlabeled(self.dname, self.pdir)
+            labeled_fn, unlabeled_fn, val_fn, test_fn = cds.get_filenames_train_validate_test(self.dname, self.pdir, n_labeled=constants['n_labeled'])
 
-            labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names = \
-                    cds.load_custom(labeled_fnames, unlabeled_fnames, batch_size, self.pdir)
+            prep = cds.Preprocessor(labeled_fn, unlabeled_fn, val_fn, test_fn, save_dir=self.pdir, overwrite=False, size=32)
+
+            labeled_trainloader, unlabeled_trainloader, val_loader, test_loader = \
+                    cds.load_custom(prep, batch_size)
+
+            class_names = prep.get_class_names()
 
         if not 'train_iteration' in constants:
             min_iterations = 32
@@ -207,10 +213,9 @@ class SessionManager:
             else:
                 train_iteration = max(max(len(labeled_trainloader), len(unlabeled_trainloader)), min_iterations)
             
-            train_iteration += 5
             constants = self.add_constant('train_iteration', train_iteration)
 
-        return labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names, constants
+        return labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names, constants, prep
 
     def load_checkpoint(self, model, ema_model, class_names, lr, alpha, lambda_u, n_epochs):
         self.ts = TrainState(model, ema_model, class_names, lr, alpha, lambda_u, n_epochs, self.spath)

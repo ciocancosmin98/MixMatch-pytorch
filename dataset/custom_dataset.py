@@ -12,7 +12,7 @@ import torch.utils.data as data
 
 from torch.utils.data import Dataset, DataLoader
 
-def load_custom(labeled_fnames, unlabeled_fnames, batch_size, save_dir):
+def load_custom(preprocessor, batch_size):
     print(f'==> Preparing the custom dataset')
     transform_train = transforms.Compose([
         dataset.RandomPadandCrop(32),
@@ -24,11 +24,8 @@ def load_custom(labeled_fnames, unlabeled_fnames, batch_size, save_dir):
         dataset.ToTensor(),
     ])
 
-
-    train_labeled_set, train_unlabeled_set, val_set, test_set, class_names = get_custom(
-        save_dir,
-        labeled_fnames,
-        unlabeled_fnames, 
+    train_labeled_set, train_unlabeled_set, val_set, test_set = get_custom(
+        preprocessor,
         transform_train=transform_train,
         transform_val=transform_val)
     labeled_trainloader = data.DataLoader(train_labeled_set, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True)
@@ -36,99 +33,47 @@ def load_custom(labeled_fnames, unlabeled_fnames, batch_size, save_dir):
     val_loader = data.DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=0)
     test_loader = data.DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=0)
 
-    return labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names
+    return labeled_trainloader, unlabeled_trainloader, val_loader, test_loader
     
+def get_custom(preprocessor, transform_train=None, transform_val=None):
+    train_labeled_dataset   = CustomDataset(preprocessor,  labeled=True, name='labeled', transform=transform_train)
+    val_dataset             = CustomDataset(preprocessor,  labeled=True,     name='val', transform=transform_val)
+    test_dataset            = CustomDataset(preprocessor,  labeled=True,    name='test', transform=transform_val)
+    train_unlabeled_dataset = CustomDataset(preprocessor, labeled=False, transform=TransformTwice(transform_train))
 
-def get_custom(save_dir, labeled_fnames, unlabeled_fnames, transform_train=None, 
-                transform_val=None):
-    
-    prep = Preprocessor(labeled_fnames, unlabeled_fnames, save_dir=save_dir, overwrite=False, size=32)
-    _, tgts_lab, imgs_unl = prep.load_all()
+    print (f"#Labeled: {len(train_labeled_dataset)} #Unlabeled: {len(train_unlabeled_dataset)} #Val: {len(val_dataset)}")
+    return train_labeled_dataset, train_unlabeled_dataset, val_dataset, test_dataset
 
-    train_idxs, val_idxs, test_idxs = train_val_test_split(tgts_lab)
-    unl_idxs = unlabeled_idxs(imgs_unl.shape[0])
-
-    train_labeled_dataset   = CustomDataset(prep,  labeled=True, indexs=train_idxs,
-                                            transform=transform_train)
-    val_dataset             = CustomDataset(prep,  labeled=True, indexs=val_idxs,
-                                            transform=transform_val)
-    test_dataset            = CustomDataset(prep,  labeled=True, indexs=test_idxs,
-                                            transform=transform_val)
-    train_unlabeled_dataset = CustomDataset(prep, labeled=False, indexs=unl_idxs,
-                                            transform=TransformTwice(transform_train))
-
-    print (f"#Labeled: {len(train_idxs)} #Unlabeled: {len(unl_idxs)} #Val: {len(val_idxs)}")
-    return train_labeled_dataset, train_unlabeled_dataset, val_dataset, test_dataset, prep.get_class_names()
-    
-
-def train_val_test_split(labels, ratios=None, seed=42):
-    train_idxs  = []
-    val_idxs    = []
-    test_idxs   = []
-    
-    if ratios is None:
-        ratios = {'train': 0.20, 'val': 0.40, 'test': 0.40}
-        
-    assert ratios['train'] > 0 and ratios['val'] > 0 and ratios['train'] + ratios['val'] < 1.0
-    
+def shuffle_data(data, targets, seed=42):
     np.random.seed(seed)
-    
-    indexs = {}
-    n_classes = np.max(labels) + 1
-    min_count = sys.maxsize
-    
-    for cls in range(n_classes):
-        idxs = np.where(labels == cls)[0]
-        
-        np.random.shuffle(idxs)
-        indexs[cls] = idxs
-        min_count = min(min_count, len(idxs))
-    
-    train_start = 0
-    train_end   = int(ratios['train'] * min_count)
-    val_start   = train_end
-    val_end     = val_start + int(ratios['val'] * min_count + 0.5)
-    test_start  = val_end
-    test_end    = min_count
-    
-    for cls in range(n_classes):
-        count = len(indexs[cls])
-        print(f'For class {cls} we are only using {min_count}/{count} images.')
-        
-        train_idxs.extend(indexs[cls][train_start:train_end])
-        val_idxs.extend(indexs[cls][val_start:val_end])
-        test_idxs.extend(indexs[cls][test_start:test_end])        
-        
-    np.random.shuffle(train_idxs)
-    np.random.shuffle(test_idxs)
-    np.random.shuffle(val_idxs)
 
-    return train_idxs, val_idxs, test_idxs
-
-def unlabeled_idxs(n_unlabeled, seed=42):
-    np.random.seed(seed)
-    unl_idxs = np.arange(n_unlabeled)
-    np.random.shuffle(unl_idxs)
-    return unl_idxs
+    n_datapoints = data.shape[0]
+    idxs = np.arange(n_datapoints)
+    np.random.shuffle(idxs)
+    
+    return data[idxs], targets[idxs]
 
 class CustomDataset(Dataset):
     def __init__(self, preprocessor, transform=None, target_transform=None,
-                 labeled=True, indexs=None):
+                 labeled=True, name=None):
             
         self.transform = transform
         self.target_transform = target_transform
         
-        imgs_lab, tgts_lab, imgs_unl = preprocessor.load_all()
         if labeled:
-            self.data    = imgs_lab
-            self.targets = tgts_lab
+            if name is None:
+                raise TypeError('No name provided to identify the labeled set.')
+
+            img_name = name + "_images"
+            tgt_name = name + "_targets"
+
+            self.data    = preprocessor.retrieve(img_name)
+            self.targets = preprocessor.retrieve(tgt_name)
+            self.data, self.targets = shuffle_data(self.data, self.targets)
         else:
-            self.data    = imgs_unl
-            self.targets = np.full(imgs_unl.shape[0], -1, dtype=int)
-        
-        if indexs is not None:
-            self.data = self.data[indexs]
-            self.targets = self.targets[indexs]
+            self.data    = preprocessor.retrieve('unlabeled_images')
+            self.targets = np.full(self.data.shape[0], -1, dtype=int)
+            self.data, self.targets = shuffle_data(self.data, self.targets)
         
     def __len__(self):
         return self.data.shape[0]
@@ -152,32 +97,54 @@ class CustomDataset(Dataset):
         return img, target
 
 class Preprocessor:
-    def __init__(self, labeled_fnames, unlabeled_fnames, save_dir='.', size=32,
+    def __init__(self, labeled_fn, unlabeled_fn, val_fn, test_fn, save_dir='.', size=32,
                     min_new_info=0.4, overwrite=False):
         
         assert (min_new_info >= 0 and min_new_info <= 1)
         assert (os.path.exists(save_dir))
         
         # define label string to integer conversion
-        classes = list(labeled_fnames.keys())
+        classes = list(labeled_fn.keys())
         self.classes = classes
-
-        #print('GOT CLASSES:', classes)
-        #for cls in classes:
-        #    print(f'{cls}\t: {len(labeled_fnames[cls])}')
 
         self._int_2_str = dict(enumerate(classes))
         self._str_2_int = dict([(a, b) for b, a in enumerate(classes)])
         
-        self.labeled_fnames   = labeled_fnames
-        self.unlabeled_fnames = unlabeled_fnames
+        self.labeled_fn   = labeled_fn
+        self.unlabeled_fn = unlabeled_fn
+        self.val_fn       = val_fn
+        self.test_fn      = test_fn
         
         self.save_dir = save_dir
         self.size = size
         self.min_new_info = min_new_info
         self.overwrite = overwrite 
+        self.npzfile = None
         
         self._preprocess()
+
+        
+    def _process_set(self, fnames, all_images):
+        imgs_set = []
+        tgts = []
+
+        n_files = 0
+
+        for cls in fnames:
+            int_label = self.str_2_int(cls)
+            imgs_cls = []
+            for fname in fnames[cls]:
+                n_files += 1
+                img = cv2.imread(fname)
+                imgs = resize_and_split(img, min_new_info=self.min_new_info,
+                                size=self.size)
+                imgs_cls.extend(imgs)
+            tgts.extend([int_label] * len(imgs_cls))
+            imgs_set.extend(imgs_cls)
+            all_images.extend(imgs)
+
+        return np.array(imgs_set), np.array(tgts)
+        
         
     def _preprocess(self):
         self.savepath = os.path.join(self.save_dir, "preproc.npz")
@@ -190,46 +157,46 @@ class Preprocessor:
         else:
             print('Preprocessing started...')
         
-        imgs_unl = []
-        imgs_all = []
-        for fname in self.unlabeled_fnames:
+        unlabeled_images = []
+        all_images = []
+        for fname in self.unlabeled_fn:
             img = cv2.imread(fname)
             imgs = resize_and_split(img, min_new_info=self.min_new_info,
                                 size=self.size)
-            imgs_unl.extend(imgs)
-            imgs_all.extend(imgs)
+            unlabeled_images.extend(imgs)
+            all_images.extend(imgs)
             
         
-        imgs_lab = []
-        tgts_lab = []
-        for cls in self.labeled_fnames:
-            int_label = self.str_2_int(cls)
-            imgs_cls = []
-            for fname in self.labeled_fnames[cls]:
-                img = cv2.imread(fname)
-                imgs = resize_and_split(img, min_new_info=self.min_new_info,
-                                size=self.size)
-                imgs_cls.extend(imgs)
-            tgts_lab.extend([int_label] * len(imgs_cls))
-            imgs_lab.extend(imgs_cls)
-            imgs_all.extend(imgs)
+        labeled_images, labeled_targets = self._process_set(self.labeled_fn, all_images)
+        val_images, val_targets         = self._process_set(self.val_fn, all_images)
+        test_images, test_targets       = self._process_set(self.test_fn, all_images)
         
-        imgs_all = np.array(imgs_all)
-        self.mean = np.mean(imgs_all, axis=(0, 1, 2))
-        self.std  = np.std(imgs_all, axis=(0, 1, 2))
+        all_images = np.array(all_images)
+        self.mean = np.mean(all_images, axis=(0, 1, 2))
+        self.std  = np.std(all_images, axis=(0, 1, 2))
         
-        imgs_unl = np.array(imgs_unl)
-        imgs_lab = np.array(imgs_lab)
-        tgts_lab = np.array(tgts_lab)
+        unlabeled_images = np.array(unlabeled_images)
         
-        imgs_unl = self.standardize(imgs_unl)
-        imgs_lab = self.standardize(imgs_lab)
+        unlabeled_images = self.standardize(unlabeled_images)
+        labeled_images   = self.standardize(labeled_images)
+        val_images       = self.standardize(val_images)
+        test_images      = self.standardize(test_images)
         
-        imgs_lab = transpose(imgs_lab)
-        imgs_unl = transpose(imgs_unl)
+        unlabeled_images = transpose(unlabeled_images)
+        labeled_images   = transpose(labeled_images)
+        val_images       = transpose(val_images)
+        test_images      = transpose(test_images)
         
-        np.savez(self.savepath, imgs_lab=imgs_lab, tgts_lab=tgts_lab,
-                 imgs_unl=imgs_unl, mean=self.mean, std=self.std)
+        np.savez(self.savepath, 
+                unlabeled_images = unlabeled_images, 
+                labeled_images   = labeled_images,
+                val_images       = val_images,
+                test_images      = test_images,
+                labeled_targets  = labeled_targets,
+                val_targets      = val_targets,
+                test_targets     = test_targets,
+                mean=self.mean,
+                std=self.std)
         
     def standardize(self, images):
         images, mean, std = [np.array(a, np.float32) for a in
@@ -251,10 +218,11 @@ class Preprocessor:
         image /= 255
         return image
         
-    def load_all(self):
-        npzfile = np.load(self.savepath)
-        return (npzfile['imgs_lab'], npzfile['tgts_lab'],
-                npzfile['imgs_unl'])
+    def retrieve(self, name):
+        if self.npzfile is None:
+            self.npzfile = np.load(self.savepath)
+        
+        return self.npzfile[name]
         
     def preprocess(self, img):
         return resize_and_split(img, min_new_info=self.min_new_info,
@@ -303,6 +271,8 @@ def resize_and_split(img, careful=True, max_aspect_ratio=3, min_new_info=0.2, si
 
 
 def get_filenames(dataset_path):
+    import random
+
     dataset_path = os.path.join(dataset_path, 'images')
 
     filenames = {}
@@ -320,6 +290,9 @@ def get_filenames(dataset_path):
 
         for fname in class_fnames:
             filenames[cls].append(os.path.join(path_to_class, fname))
+
+        random.seed(42)
+        random.shuffle(filenames[cls])
 
     return filenames, classes
 
@@ -347,41 +320,63 @@ def get_fnames128(dataset_path):
 
     return fnames_128, classes
 
-def get_labeled_unlabeled(dataset_name, session_path):
+def get_filenames_train_validate_test(dataset_name, session_path, n_labeled=1000, balance_unlabeled=False, n_test_per_class=100):
     import pickle, os
 
     dataset_path = os.path.join('data', dataset_name)
-    save_path = os.path.join(session_path, 'lbl_unlbl.pkl')
+    save_path = os.path.join(session_path, 'filenames_list.pkl')
 
     if os.path.exists(save_path):
         print('==> Loading list of labeled and unlabeled data from memory')
         save_file = open(save_path, "rb")
-        labeled_fnames, unlabeled_fnames = pickle.load(save_file)
-        return labeled_fnames, unlabeled_fnames
+        labeled, unlabeled, val, test = pickle.load(save_file)
+        return labeled, unlabeled, val, test
 
     print('==> Calculating list of labeled and unlabeled data')
 
     fnames_128, classes = get_fnames128(dataset_path)
 
-    n_labeled = 2500
     n_classes = len(classes)
     n_labeled_per_class = int(n_labeled / n_classes)
 
     seed = 42
     random.seed(seed)
 
-    unlabeled_fnames = []
-    labeled_fnames = {}
+    unlabeled = {}
+    labeled   = {}
+    val       = {}
+    test      = {}
 
-    for cls in fnames_128:
-        random.shuffle(fnames_128[cls])
-        
-        labeled_fnames[cls] = fnames_128[cls][:n_labeled_per_class]
-        unlabeled_fnames.extend(fnames_128[cls][n_labeled_per_class:])
+    val_start     = 0
+    val_end       = val_start + n_test_per_class
+    test_start    = val_end
+    test_end      = test_start + n_test_per_class
+    labeled_start = test_end
+    labeled_end   = labeled_start + n_labeled_per_class
 
-    data = (labeled_fnames, unlabeled_fnames)
+    min_unl = 99999999
+
+    for cls in fnames_128:        
+        val[cls]       = fnames_128[cls][      val_start :     val_end]
+        test[cls]      = fnames_128[cls][     test_start :    test_end]
+        labeled[cls]   = fnames_128[cls][  labeled_start : labeled_end]
+        unlabeled[cls] = fnames_128[cls][    labeled_end :]
+
+        min_unl = min(min_unl, len(unlabeled[cls]))
+
+    unlabeled_final = []
+    if balance_unlabeled:
+        for cls in unlabeled:
+            unlabeled_final.extend(unalbeled[cls][:min_unl])
+    else:
+        for cls in unlabeled:
+            unlabeled_final.extend(unlabeled[cls])
+
+    unlabeled = unlabeled_final
+
+    data = (labeled, unlabeled, val, test)
     save_file = open(save_path, "wb")
     pickle.dump(data, save_file)
     save_file.close()
 
-    return labeled_fnames, unlabeled_fnames
+    return labeled, unlabeled, val, test

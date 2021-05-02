@@ -103,7 +103,7 @@ def main():
 
     sm = SessionManager(dataset_name=args.dataset_name, resume_id=args.session_id)
     
-    labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names, constants = \
+    labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names, constants, preprocessor = \
             sm.load_dataset(args)
 
     model, ema_model = get_wideresnet_models(len(class_names))
@@ -119,7 +119,7 @@ def main():
         if constants['enable_mixmatch']:
             train_loss = train(labeled_trainloader, unlabeled_trainloader, epoch, ts)
         else:
-            train_loss = train_supervised(labeled_trainloader, epoch, ts)
+            train_loss = train_supervised(labeled_trainloader, epoch, ts, preprocessor)
 
         losses, accs, confs, names = validate_all(labeled_trainloader, val_loader, test_loader, train_loss, ts)
 
@@ -278,7 +278,7 @@ def train(labeled_trainloader, unlabeled_trainloader, epoch, train_state):
 
     return losses.avg
 
-def train_supervised(labeled_trainloader, epoch, train_state):
+def train_supervised(labeled_trainloader, epoch, train_state, preprocessor):
     model = train_state.model
     optimizer = train_state.optimizer
     ema_optimizer = train_state.ema_optimizer
