@@ -78,11 +78,16 @@ class TrainState:
         self.save_path = os.path.join(training_dir, 'checkpoint.pth.tar')
         self.best_path = os.path.join(training_dir, 'best_model.pth.tar')
 
-    def _handle_resume(self):
-        if os.path.exists(self.save_path):
+    def _handle_resume(self, load_best=False):
+        if load_best:
+            resume_path = self.best_path
+        else:
+            resume_path = self.save_path
+
+        if os.path.exists(resume_path):
             # Load checkpoint.
             print('==> Resuming from checkpoint..')
-            checkpoint = load(self.save_path)
+            checkpoint = load(resume_path)
             self.best_acc = checkpoint['best_acc']
             self.start_epoch = checkpoint['epoch']
             self.model.load_state_dict(checkpoint['state_dict'])

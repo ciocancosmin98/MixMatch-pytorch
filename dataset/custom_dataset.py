@@ -98,7 +98,7 @@ class CustomDataset(Dataset):
 
 class Preprocessor:
     def __init__(self, labeled_fn, unlabeled_fn, val_fn, test_fn, save_dir='.', size=32,
-                    min_new_info=0.4, overwrite=False):
+                    min_new_info=0.4, overwrite=False, extract_one=False):
         
         assert (min_new_info >= 0 and min_new_info <= 1)
         assert (os.path.exists(save_dir))
@@ -120,30 +120,41 @@ class Preprocessor:
         self.min_new_info = min_new_info
         self.overwrite = overwrite 
         self.npzfile = None
+
+        self.extract_one = extract_one
         
         self._preprocess()
-
         
-    def _process_set(self, fnames, all_images):
+    def _read_and_resize_set(self, fnames, all_images):
         imgs_set = []
         tgts = []
-
-        n_files = 0
 
         for cls in fnames:
             int_label = self.str_2_int(cls)
             imgs_cls = []
             for fname in fnames[cls]:
-                n_files += 1
                 img = cv2.imread(fname)
-                imgs = resize_and_split(img, min_new_info=self.min_new_info,
-                                size=self.size)
+
+                if self.extract_one:
+                    imgs = resize_and_split(img, min_new_info=99999999, careful=False,
+                                    size=self.size)
+                else:
+                    imgs = resize_and_split(img, min_new_info=self.min_new_info,
+                                    size=self.size)
                 imgs_cls.extend(imgs)
             tgts.extend([int_label] * len(imgs_cls))
             imgs_set.extend(imgs_cls)
             all_images.extend(imgs)
 
         return np.array(imgs_set), np.array(tgts)
+
+    def process_set(self, fnames):
+        imgs, tgts = self._read_and_resize_set(fnames, [])
+
+        imgs = self.standardize(imgs)
+        imgs = transpose(imgs)
+
+        return imgs, tgts
         
         
     def _preprocess(self):
@@ -167,9 +178,9 @@ class Preprocessor:
             all_images.extend(imgs)
             
         
-        labeled_images, labeled_targets = self._process_set(self.labeled_fn, all_images)
-        val_images, val_targets         = self._process_set(self.val_fn, all_images)
-        test_images, test_targets       = self._process_set(self.test_fn, all_images)
+        labeled_images, labeled_targets = self._read_and_resize_set(self.labeled_fn, all_images)
+        val_images, val_targets         = self._read_and_resize_set(self.val_fn, all_images)
+        test_images, test_targets       = self._read_and_resize_set(self.test_fn, all_images)
         
         all_images = np.array(all_images)
         self.mean = np.mean(all_images, axis=(0, 1, 2))
