@@ -2,18 +2,44 @@ import numpy as np
 import os
 
 import torchvision.transforms as transforms
+#from torchvision.transforms import ToTensor
+from torchvision.transforms import RandomAffine
+from torchvision.transforms.functional import InterpolationMode
 import torch
 
 def load_from_list(transform_list):
     result_list = []
+    tensor_list = []
+    """
+    pil_list = []
+    pil_list.append(ToPILImage())
+    """
 
     for transform in transform_list:
         if transform['name'] == 'RandomPadandCrop':
             result_list.append(RandomPadandCrop())
         elif transform['name'] == 'RandomFlip':
             result_list.append(RandomFlip())
+        elif transform['name'] == 'RandomPadRotate':
+            tensor_list.append(
+                RandomRotate(
+                    float(transform['degrees']),
+                    transform['interpolation']
+                )
+            )
 
-    result_list.append(ToTensor())
+    """
+    elif transform['name'] == 'ColorJitter':
+        tensor_list.append(RandomColorJitter(
+            float(transform['brightness']),
+            float(transform['contrast']),
+            float(transform['saturation']),
+            float(transform['hue'])
+        ))
+    """
+
+    result_list.append(ToTensorFromNumpy())
+    result_list.extend(tensor_list)
 
     return transforms.Compose(result_list)
 
@@ -60,7 +86,7 @@ class TransformTwice:
 def pad(x, border=4):
     return np.pad(x, [(0, 0), (border, border), (border, border)], mode='reflect')
 
-class RandomPadandCrop(object):
+class RandomPadandCrop():
     def __init__(self):
         pass
 
@@ -78,7 +104,54 @@ class RandomPadandCrop(object):
 
         return x
 
-class RandomFlip(object):
+"""
+class RandomColorJitter():
+    def __init__(self, brightness, contrast, saturation, hue):
+        self.transform = transforms.ColorJitter(
+            brightness=brightness,
+            contrast=contrast,
+            saturation=saturation,
+            hue=hue
+        )
+    def __call__(self, x):
+        x = self.transform(x)
+        return x
+"""
+class RandomRotate():
+    def __init__(self, degrees, interpolation):
+        assert isinstance(degrees, float)
+
+        if interpolation == "NEAREST":
+            interpolation = InterpolationMode.NEAREST
+        elif interpolation == "BILINEAR":
+            interpolation = InterpolationMode.BILINEAR
+        else:
+            raise TypeError(f"Transform interpolation {interpolation} not supported.")
+        self.rotate = RandomAffine(degrees,
+                interpolation=interpolation)
+        self.pad = None
+
+    def __call__(self, x):
+        old_h, old_w = x.shape[1:]
+
+        if self.pad is None:
+            self.pad_size = x.shape[1] // 4
+            self.hp = self.pad_size // 2
+            self.pad = transforms.Pad(self.pad_size, padding_mode='reflect')
+
+        x = self.pad(x)
+
+        h, w = x.shape[1:]
+
+        x = self.rotate(x)
+
+        top = np.random.randint(self.hp, h - old_h - self.hp)
+        left = np.random.randint(self.hp, w - old_w - self.hp)
+
+        x = x[:, top: top + old_h, left: left + old_w]
+        return x
+
+class RandomFlip():
     """Flip randomly the image.
     """
     def __call__(self, x):
@@ -87,7 +160,7 @@ class RandomFlip(object):
 
         return x.copy()
 
-class GaussianNoise(object):
+class GaussianNoise():
     """Add gaussian noise to the image.
     """
     def __call__(self, x):
@@ -95,7 +168,7 @@ class GaussianNoise(object):
         x += np.random.randn(c, h, w) * 0.15
         return x
 
-class ToTensor(object):
+class ToTensorFromNumpy():
     """Transform the image to tensor.
     """
     def __call__(self, x):

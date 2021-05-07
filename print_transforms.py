@@ -23,6 +23,7 @@ parser.add_argument('--session-id', '-i', default=-1, type=int, metavar='ID',
                     help='the id of the session whose information will be printed')
 parser.add_argument('--verbose', '-v', action="store_true",
                     help='show more information')
+parser.add_argument('--transforms', default='default.json', type=str)
 parser.add_argument('--n-transformations', '-t', default=5, type=int, metavar='N_TR',
                     help='number of transformations per image')
 parser.add_argument('--n-images', '-g', default=20, type=int, metavar='N_IMG',
@@ -55,7 +56,7 @@ def get_transform_grid(images, preprocessor):
     color = (0, 0, 0)
     thickness = 2
 
-    train_transform, _ = load_transforms('test.json')
+    train_transform, _ = load_transforms(args.transforms)
     result = np.full((SIZE * n_rows, SIZE * args.n_images + TEXT_LEN, 3), fill_value=1.0)
 
     for img_index in range(args.n_images):
