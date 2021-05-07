@@ -1,4 +1,4 @@
-from dataset.cifar10 import TransformTwice, transpose
+from dataset.transforms import TransformTwice, transpose, load_transforms
 import os
 import cv2
 import torch
@@ -12,17 +12,10 @@ import torch.utils.data as data
 
 from torch.utils.data import Dataset, DataLoader
 
-def load_custom(preprocessor, batch_size):
+def load_custom(preprocessor, batch_size, transforms_name):
     print(f'==> Preparing the custom dataset')
-    transform_train = transforms.Compose([
-        dataset.RandomPadandCrop(32),
-        dataset.RandomFlip(),
-        dataset.ToTensor(),
-    ])
 
-    transform_val = transforms.Compose([
-        dataset.ToTensor(),
-    ])
+    transform_train, transform_val = load_transforms(transforms_name)
 
     train_labeled_set, train_unlabeled_set, val_set, test_set = get_custom(
         preprocessor,
