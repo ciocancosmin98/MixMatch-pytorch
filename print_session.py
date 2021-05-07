@@ -14,7 +14,7 @@ from session import TrainState
 
 
 short_consts   = ['dataset_name', 'session_id', 'enable_mixmatch', 'n_labeled']
-verbose_consts = ['epochs', 'train_iteration', 'batch_size', 'lr', 'lambda_u', 'T', 'alpha']
+verbose_consts = ['epochs', 'train_iteration', 'transforms', 'batch_size', 'lr', 'lambda_u', 'T', 'alpha']
 
 short_vars = ['epoch', 'acc', 'best_acc']
 verbose_vars = []
@@ -95,15 +95,10 @@ def get_image(predictions):
             start_x = SIZE * index + TEXT_LEN
             img = cv2.imread(fname)
             img = resize_and_split(img, careful=False, max_aspect_ratio=3, min_new_info=999999, size=SIZE)[0]
-            #print(result.shape)
-            #print(img.shape)
-            #print(result[start_y : start_y + SIZE, start_x : start_x + SIZE, :].shape)
             result[start_y : start_y + SIZE, start_x : start_x + SIZE, :] = img / 255
             
             start = (SIZE // 6, start_y + int(3 * SIZE / 4))
             result = cv2.putText(result, _class, start, font, scale, color, thickness, cv2.LINE_AA)
-
-
     
     return result
     
