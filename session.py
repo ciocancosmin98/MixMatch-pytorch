@@ -12,6 +12,8 @@ import shutil
 import dataset.custom_dataset as cds
 import dataset.cifar10 as cifar10
 
+import dataset.transforms as transforms
+
 def linear_rampup(current, rampup_length):
     if rampup_length == 0:
         return 1.0
@@ -190,13 +192,14 @@ class SessionManager:
         constants = self.load_constants(args)
         batch_size = constants['batch_size']
         n_labeled  = constants['n_labeled']
+        transforms_name = constants['transforms']
 
         if self.dname == "cifar10":
             # load cifar-10
 
             cifar_dir = os.path.join(self.droot, 'cifar10')
             labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names = \
-                    cifar10.load_cifar10_default(cifar_dir, batch_size, n_labeled)
+                    cifar10.load_cifar10_default(cifar_dir, batch_size, n_labeled, transforms_name)
 
             prep = None
         else:
@@ -206,7 +209,7 @@ class SessionManager:
             prep = cds.Preprocessor(labeled_fn, unlabeled_fn, val_fn, test_fn, save_dir=self.pdir, overwrite=False, size=32)
 
             labeled_trainloader, unlabeled_trainloader, val_loader, test_loader = \
-                    cds.load_custom(prep, batch_size)
+                    cds.load_custom(prep, batch_size, transforms_name)
 
             class_names = prep.get_class_names()
 

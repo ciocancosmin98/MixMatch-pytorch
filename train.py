@@ -63,6 +63,7 @@ parser.add_argument('--lambda-u', default=75, type=float)
 parser.add_argument('--T', default=0.5, type=float)
 parser.add_argument('--ema-decay', default=0.999, type=float)
 parser.add_argument('--enable-mixmatch', default=True, type=str_2_bool)
+parser.add_argument('--transforms', default='default.json', type=str)
 
 # Dataset options
 parser.add_argument('--dataset-name', default='animals10', type=str, metavar='NAME',
