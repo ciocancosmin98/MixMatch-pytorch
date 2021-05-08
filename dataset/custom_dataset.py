@@ -128,16 +128,19 @@ class Preprocessor:
             for fname in fnames[cls]:
                 img = cv2.imread(fname)
 
+                """
                 if self.extract_one:
                     imgs = resize_and_split(img, min_new_info=99999999, careful=False,
                                     size=self.size)
                 else:
                     imgs = resize_and_split(img, min_new_info=self.min_new_info,
                                     size=self.size)
-                imgs_cls.extend(imgs)
+                """
+                img = resize(img, size=self.size)
+                imgs_cls.append(img)
             tgts.extend([int_label] * len(imgs_cls))
             imgs_set.extend(imgs_cls)
-            all_images.extend(imgs)
+            all_images.extend(imgs_cls)
 
         return np.array(imgs_set), np.array(tgts)
 
@@ -165,10 +168,13 @@ class Preprocessor:
         all_images = []
         for fname in self.unlabeled_fn:
             img = cv2.imread(fname)
+            """
             imgs = resize_and_split(img, min_new_info=self.min_new_info,
                                 size=self.size)
-            unlabeled_images.extend(imgs)
-            all_images.extend(imgs)
+            """
+            img = resize(img, self.size)
+            unlabeled_images.append(img)
+            all_images.append(img)
             
         
         labeled_images, labeled_targets = self._read_and_resize_set(self.labeled_fn, all_images)
@@ -229,8 +235,9 @@ class Preprocessor:
         return self.npzfile[name]
         
     def preprocess(self, img):
-        return resize_and_split(img, min_new_info=self.min_new_info,
-                                size=self.size)
+        #return resize_and_split(img, min_new_info=self.min_new_info,
+        #                        size=self.size)
+        return resize(img, self.size)
         
     def get_class_names(self):
         return self.classes
@@ -241,7 +248,7 @@ class Preprocessor:
     def str_2_int(self, str_label):
         return self._str_2_int[str_label]
 
-
+"""
 def resize_and_split(img, careful=True, max_aspect_ratio=3, min_new_info=0.2, size=128):
     height, width = img.shape[0], img.shape[1]
     min_dim = min(height, width)
@@ -272,7 +279,36 @@ def resize_and_split(img, careful=True, max_aspect_ratio=3, min_new_info=0.2, si
         add_img(result_imgs, start_x, start_y)
     
     return result_imgs
-
+"""
+def resize(img, size=128):
+    height, width = img.shape[0], img.shape[1]
+    min_dim = min(height, width)
+    scaling = min_dim / size
+    new_height = int(height / scaling)
+    new_width = int(width / scaling)
+    img = cv2.resize(img, (new_width, new_height))
+    
+    y_start = new_height // 2 - size // 2
+    x_start = new_width // 2 - size // 2
+    return img[y_start : y_start + size, x_start : x_start + size, :]
+    """
+    max_dim = max(new_height, new_width)
+    ratio = max_dim / size
+    def add_img(result_imgs, start_x, start_y):
+        img_tmp = img_1[start_y:start_y+size, start_x:start_x+size]
+        result_imgs.append(img_tmp)
+    
+    result_imgs = []
+    if ratio > (1 + min_new_info):
+        add_img(result_imgs, 0, 0)
+        add_img(result_imgs, new_width - size, new_height - size)
+    else:
+        start_x = np.random.randint(0, new_width  - size + 1)
+        start_y = np.random.randint(0, new_height - size + 1)
+        add_img(result_imgs, start_x, start_y)
+    
+    return result_imgs
+    """
 
 def get_filenames(dataset_path):
     import random
@@ -282,7 +318,7 @@ def get_filenames(dataset_path):
     filenames = {}
     classes = os.listdir(dataset_path)
 
-    assert (isinstance(classes, list) and len(classes) > 0)
+    assert (len(classes) > 0)
 
     for cls in classes:
         filenames[cls] = []
@@ -300,6 +336,7 @@ def get_filenames(dataset_path):
 
     return filenames, classes
 
+"""
 def get_fnames128(dataset_path):
     fnames_128 = {}
 
@@ -323,6 +360,7 @@ def get_fnames128(dataset_path):
                 fnames_128[cls].append(fname)
 
     return fnames_128, classes
+"""
 
 def get_filenames_train_validate_test(dataset_name, session_path, n_labeled=1000, balance_unlabeled=False, n_test_per_class=100):
     import pickle, os
@@ -338,7 +376,8 @@ def get_filenames_train_validate_test(dataset_name, session_path, n_labeled=1000
 
     print('==> Calculating list of labeled and unlabeled data')
 
-    fnames_128, classes = get_fnames128(dataset_path)
+    #fnames_128, classes = get_fnames128(dataset_path)
+    fnames, classes = get_filenames(dataset_path)
 
     n_classes = len(classes)
     n_labeled_per_class = int(n_labeled / n_classes)
@@ -360,18 +399,18 @@ def get_filenames_train_validate_test(dataset_name, session_path, n_labeled=1000
 
     min_unl = 99999999
 
-    for cls in fnames_128:        
-        val[cls]       = fnames_128[cls][      val_start :     val_end]
-        test[cls]      = fnames_128[cls][     test_start :    test_end]
-        labeled[cls]   = fnames_128[cls][  labeled_start : labeled_end]
-        unlabeled[cls] = fnames_128[cls][    labeled_end :]
+    for cls in fnames:        
+        val[cls]       = fnames[cls][      val_start :     val_end]
+        test[cls]      = fnames[cls][     test_start :    test_end]
+        labeled[cls]   = fnames[cls][  labeled_start : labeled_end]
+        unlabeled[cls] = fnames[cls][    labeled_end :]
 
         min_unl = min(min_unl, len(unlabeled[cls]))
 
     unlabeled_final = []
     if balance_unlabeled:
         for cls in unlabeled:
-            unlabeled_final.extend(unalbeled[cls][:min_unl])
+            unlabeled_final.extend(unlabeled[cls][:min_unl])
     else:
         for cls in unlabeled:
             unlabeled_final.extend(unlabeled[cls])
