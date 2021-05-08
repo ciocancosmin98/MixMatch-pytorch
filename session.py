@@ -11,6 +11,7 @@ import shutil
 
 import dataset.custom_dataset as cds
 import dataset.cifar10 as cifar10
+import models.wideresnet as models
 
 import dataset.transforms as transforms
 
@@ -25,6 +26,26 @@ class MyCrossEntropy(nn.CrossEntropyLoss):
     def forward(self, _input, target):
         target = target.long()
         return F.cross_entropy(_input, target, weight=self.weight, ignore_index=self.ignore_index, reduction=self.reduction)
+
+        
+def get_wideresnet_models(n_classes):
+    print("==> creating WRN-28-2")
+
+    def create_model(ema=False):
+        model = models.WideResNet(num_classes=n_classes)
+        model = model.cuda()
+
+        if ema:
+            for param in model.parameters():
+                param.detach_()
+
+        return model
+
+    model = create_model()
+    ema_model = create_model(ema=True)
+
+    print('    Total params: %.2fM' % (sum(p.numel() for p in model.parameters())/1000000.0))
+    return model, ema_model
 
 class SemiLoss(object):
     def __init__(self, lambda_u, n_epochs):
@@ -61,11 +82,17 @@ class WeightEMA(object):
                 param.mul_(1 - self.wd)
 
 class TrainState:
-    def __init__(self, model, ema_model, class_names, lr, alpha, lambda_u, n_epochs, session_path):
+    def __init__(self, model, ema_model, class_names, constants, session_path):
         self.best_acc = 0
         self.start_epoch = 0
         self.model = model
         self.ema_model = ema_model
+
+        lr = constants['lr']
+        alpha = constants['alpha']
+        lambda_u = constants['lambda_u']
+        n_epochs = constants['epochs']
+        self.constants = constants
         
         self.train_criterion = SemiLoss(lambda_u, n_epochs)
         self.criterion = MyCrossEntropy()
@@ -79,6 +106,29 @@ class TrainState:
 
         self.save_path = os.path.join(training_dir, 'checkpoint.pth.tar')
         self.best_path = os.path.join(training_dir, 'best_model.pth.tar')
+        self.pretrained_path = os.path.join('pretrained', 'cifar10_model.pth.tar')
+
+    def _transfer_weights(self):
+        checkpoint = load(self.pretrained_path)
+        lr = self.constants['lr']
+        alpha = self.constants['alpha']
+
+        print('==> Using pretrained model from cifar10 with accuracy %.3f' % checkpoint['best_acc'])
+
+        cifar10_model, cifar10_ema_model = get_wideresnet_models(10)
+        cifar10_model.load_state_dict(checkpoint['state_dict'])
+        cifar10_ema_model.load_state_dict(checkpoint['ema_state_dict'])
+
+        self.model.block1.load_state_dict(cifar10_model.block1.state_dict())
+        self.model.block2.load_state_dict(cifar10_model.block2.state_dict())
+        self.model.block3.load_state_dict(cifar10_model.block3.state_dict())
+
+        self.ema_model.block1.load_state_dict(cifar10_ema_model.block1.state_dict())
+        self.ema_model.block2.load_state_dict(cifar10_ema_model.block2.state_dict())
+        self.ema_model.block3.load_state_dict(cifar10_ema_model.block3.state_dict())
+
+        self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
+        self.ema_optimizer = WeightEMA(self.model, self.ema_model, lr=lr, alpha=alpha)
 
     def _handle_resume(self, load_best=False):
         if load_best:
@@ -95,6 +145,8 @@ class TrainState:
             self.model.load_state_dict(checkpoint['state_dict'])
             self.ema_model.load_state_dict(checkpoint['ema_state_dict'])
             self.optimizer.load_state_dict(checkpoint['optimizer'])
+        elif self.constants['use_pretrained'] and os.path.exists(self.pretrained_path):
+            self._transfer_weights()
 
     def _save_checkpoint(self, val_acc, epoch):
         is_best = val_acc > self.best_acc
@@ -200,11 +252,10 @@ class SessionManager:
             cifar_dir = os.path.join(self.droot, 'cifar10')
             labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names = \
                     cifar10.load_cifar10_default(cifar_dir, batch_size, n_labeled, transforms_name)
-
-            prep = None
         else:
             # load custom dataset
-            labeled_fn, unlabeled_fn, val_fn, test_fn = cds.get_filenames_train_validate_test(self.dname, self.pdir, n_labeled=constants['n_labeled'])
+            labeled_fn, unlabeled_fn, val_fn, test_fn = cds.get_filenames_train_validate_test(self.dname, 
+                    self.pdir, constants['n_labeled'], constants['balance_unlabeled'], constants['n_test_per_class'])
 
             prep = cds.Preprocessor(labeled_fn, unlabeled_fn, val_fn, test_fn, save_dir=self.pdir, overwrite=False, size=32)
 
@@ -223,10 +274,12 @@ class SessionManager:
             
             constants = self.add_constant('train_iteration', train_iteration)
 
-        return labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names, constants, prep
+        return labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names, constants
 
-    def load_checkpoint(self, model, ema_model, class_names, lr, alpha, lambda_u, n_epochs):
-        self.ts = TrainState(model, ema_model, class_names, lr, alpha, lambda_u, n_epochs, self.spath)
+    def load_checkpoint(self, class_names, constants):
+        model, ema_model = get_wideresnet_models(len(class_names))
+
+        self.ts = TrainState(model, ema_model, class_names, constants, self.spath)
         self.ts._handle_resume()
         
         self.writer = SummaryWriter(self.wdir)

@@ -64,6 +64,15 @@ parser.add_argument('--T', default=0.5, type=float)
 parser.add_argument('--ema-decay', default=0.999, type=float)
 parser.add_argument('--enable-mixmatch', default=True, type=str_2_bool)
 parser.add_argument('--transforms', default='default.json', type=str)
+parser.add_argument('--use-pretrained', '-p', action="store_true",
+                    help='use a pretrained model as a starting point')
+parser.add_argument('--balance-unlabeled', '-b', action="store_true",
+                    help='the unlabeled set will contain an equal amount'
+                         ' of images from every class')
+parser.add_argument('--n-test-per-class', '-t', default=100, type=int,
+                    help='number of images of every class to be included'
+                         'in the testing and validation datasets')
+#balance_unlabeled=False, n_test_per_class=100
 
 # Dataset options
 parser.add_argument('--dataset-name', default='animals10', type=str, metavar='NAME',
@@ -78,25 +87,6 @@ if args.manualSeed is None:
     args.manualSeed = random.randint(1, 10000)
 np.random.seed(args.manualSeed)
 
-def get_wideresnet_models(n_classes):
-    print("==> creating WRN-28-2")
-
-    def create_model(ema=False):
-        model = models.WideResNet(num_classes=n_classes)
-        model = model.cuda()
-
-        if ema:
-            for param in model.parameters():
-                param.detach_()
-
-        return model
-
-    model = create_model()
-    ema_model = create_model(ema=True)
-
-    print('    Total params: %.2fM' % (sum(p.numel() for p in model.parameters())/1000000.0))
-    return model, ema_model
-
 def main():
     global constants
     # enable cudnn auto-tuner to find the best algorithm for the given harware
@@ -104,12 +94,10 @@ def main():
 
     sm = SessionManager(dataset_name=args.dataset_name, resume_id=args.session_id)
     
-    labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names, constants, preprocessor = \
+    labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names, constants = \
             sm.load_dataset(args)
 
-    model, ema_model = get_wideresnet_models(len(class_names))
-
-    ts, writer = sm.load_checkpoint(model, ema_model, class_names, constants['lr'], constants['ema_decay'], constants['lambda_u'], constants['epochs'])
+    ts, writer = sm.load_checkpoint(class_names, constants)
 
     step = 0
     # Train and val
@@ -120,7 +108,7 @@ def main():
         if constants['enable_mixmatch']:
             train_loss = train(labeled_trainloader, unlabeled_trainloader, epoch, ts)
         else:
-            train_loss = train_supervised(labeled_trainloader, epoch, ts, preprocessor)
+            train_loss = train_supervised(labeled_trainloader, epoch, ts)
 
         losses, accs, confs, names = validate_all(labeled_trainloader, val_loader, test_loader, train_loss, ts)
 
@@ -279,7 +267,7 @@ def train(labeled_trainloader, unlabeled_trainloader, epoch, train_state):
 
     return losses.avg
 
-def train_supervised(labeled_trainloader, epoch, train_state, preprocessor):
+def train_supervised(labeled_trainloader, epoch, train_state):
     model = train_state.model
     optimizer = train_state.optimizer
     ema_optimizer = train_state.ema_optimizer
