@@ -8,13 +8,13 @@ import cv2
 import numpy as np
 import random
 
-from dataset.custom_dataset import Preprocessor, resize_and_split
+from dataset.custom_dataset import Preprocessor, resize
 import models.wideresnet as models
 from session import TrainState
 
 
-short_consts   = ['dataset_name', 'session_id', 'enable_mixmatch', 'n_labeled']
-verbose_consts = ['epochs', 'train_iteration', 'transforms', 'batch_size', 'lr', 'lambda_u', 'T', 'alpha']
+short_consts   = ['dataset_name', 'session_id', 'enable_mixmatch', 'balance_unlabeled', 'n_labeled', 'transforms']
+verbose_consts = ['epochs', 'train_iteration', 'batch_size', 'lr', 'lambda_u', 'T', 'alpha']
 
 short_vars = ['epoch', 'acc', 'best_acc']
 verbose_vars = []
@@ -94,7 +94,8 @@ def get_image(predictions):
             start_y = SIZE * class_index
             start_x = SIZE * index + TEXT_LEN
             img = cv2.imread(fname)
-            img = resize_and_split(img, careful=False, max_aspect_ratio=3, min_new_info=999999, size=SIZE)[0]
+            #img = resize_and_split(img, careful=False, max_aspect_ratio=3, min_new_info=999999, size=SIZE)[0]
+            img = resize(img, size=SIZE)
             result[start_y : start_y + SIZE, start_x : start_x + SIZE, :] = img / 255
             
             start = (SIZE // 6, start_y + int(3 * SIZE / 4))
@@ -105,6 +106,12 @@ def get_image(predictions):
 
 def show_test_images():
     session_dir = os.path.join('sessions', args.dataset_name, str(_id))
+
+    const_path = os.path.join(session_dir, 'const.pth.tar')
+    if not os.path.exists(const_path):
+        raise Exception("Session exists but is not properly initialized: missing constants")
+    constants = load(const_path)
+
     test_fn = get_image_filenames(session_dir)
 
     preprocessing_dir = os.path.join(session_dir, 'preprocessing')
@@ -114,7 +121,7 @@ def show_test_images():
 
     model, ema_model = get_wideresnet_models(len(prep.get_class_names()))
         
-    ts = TrainState(model, ema_model, prep.get_class_names(), 0, 0, 0, 0, session_dir)
+    ts = TrainState(model, ema_model, prep.get_class_names(), constants, session_dir)
     ts._handle_resume(load_best=True)
 
     model.cpu()
@@ -186,7 +193,7 @@ def print_list(list_name, short_list, verbose_list, dictionary):
         if not active:
             return
 
-        value = dictionary[name]
+        value = dictionary.get(name, None)
         if not isinstance(value, float):
             str_value = str(value)
         else:

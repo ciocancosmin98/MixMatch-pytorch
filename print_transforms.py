@@ -11,7 +11,7 @@ sys.path.append('dataset')
 
 from transforms import load_transforms
 
-from dataset.custom_dataset import Preprocessor, resize_and_split
+from dataset.custom_dataset import Preprocessor
 import models.wideresnet as models
 from session import TrainState
 
