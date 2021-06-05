@@ -21,6 +21,8 @@ from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig, confusi
 
 from session import SessionManager
 
+import shlex
+
 def str_2_bool(s):
     if not isinstance(s, str):
         raise TypeError('Trying to convert arbitrary object to boolean.')
@@ -72,7 +74,6 @@ parser.add_argument('--balance-unlabeled', '-b', action="store_true",
 parser.add_argument('--n-test-per-class', '-t', default=100, type=int,
                     help='number of images of every class to be included'
                          'in the testing and validation datasets')
-#balance_unlabeled=False, n_test_per_class=100
 
 # Dataset options
 parser.add_argument('--dataset-name', default='animals10', type=str, metavar='NAME',
@@ -80,17 +81,22 @@ parser.add_argument('--dataset-name', default='animals10', type=str, metavar='NA
 parser.add_argument('--session-id', default=-1, type=int, metavar='ID',
                     help='the id of the session to be resumed')
 
-args = parser.parse_args()
+argString = '--dataset-name cifar10 --n-labeled 10000 --enable-mixmatch false' #'--enable-mixmatch true'
+args = parser.parse_args(shlex.split(argString))
 
 # Random seed
 if args.manualSeed is None:
     args.manualSeed = random.randint(1, 10000)
 np.random.seed(args.manualSeed)
 
-def main():
+def main(base_path=None, output_path=None, args_string=None, categories=None, queue=None, sendMetrics=None):
     global constants
+    global args
     # enable cudnn auto-tuner to find the best algorithm for the given harware
     cudnn.benchmark = True
+    
+    if not args_string is None:
+        args = parser.parse_args(shlex.split(args_string))
 
     sm = SessionManager(dataset_name=args.dataset_name, resume_id=args.session_id)
     
