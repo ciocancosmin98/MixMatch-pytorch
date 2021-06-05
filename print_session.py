@@ -13,7 +13,7 @@ import models.wideresnet as models
 from session import TrainState
 
 
-short_consts   = ['dataset_name', 'session_id', 'enable_mixmatch', 'balance_unlabeled', 'n_labeled', 'transforms']
+short_consts   = ['dataset_name', 'session_id', 'enable_mixmatch', 'balance_unlabeled', 'use_pretrained', 'n_labeled', 'n_test_per_class', 'transforms']
 verbose_consts = ['epochs', 'train_iteration', 'batch_size', 'lr', 'lambda_u', 'T', 'alpha']
 
 short_vars = ['epoch', 'acc', 'best_acc']
@@ -67,7 +67,7 @@ def get_image_filenames(session_dir):
 def get_image(predictions):
     random.seed(42)
 
-    SIZE = 80
+    SIZE = 64
     TEXT_LEN = int(SIZE // 2 * 3)
 
     n_classes = len(predictions.keys())
