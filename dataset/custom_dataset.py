@@ -126,7 +126,7 @@ class Preprocessor:
             int_label = self.str_2_int(cls)
             imgs_cls = []
             for fname in fnames[cls]:
-                img = cv2.imread(fname)
+                #img = cv2.imread(fname)
 
                 """
                 if self.extract_one:
@@ -136,6 +136,16 @@ class Preprocessor:
                     imgs = resize_and_split(img, min_new_info=self.min_new_info,
                                     size=self.size)
                 """
+                try:
+                    img = cv2.imread(fname)
+                except:
+                    print('EXCEPTION READING')
+                    continue
+                
+                if img is None:
+                    print('IMG IS NONE')
+                    continue
+
                 img = resize(img, size=self.size)
                 imgs_cls.append(img)
             tgts.extend([int_label] * len(imgs_cls))
@@ -167,11 +177,21 @@ class Preprocessor:
         unlabeled_images = []
         all_images = []
         for fname in self.unlabeled_fn:
-            img = cv2.imread(fname)
+            #img = cv2.imread(fname)
             """
             imgs = resize_and_split(img, min_new_info=self.min_new_info,
                                 size=self.size)
             """
+            try:
+                img = cv2.imread(fname)
+            except:
+                print('EXCEPTION READING')
+                continue
+                
+            if img is None:
+                print('IMG IS NONE')
+                continue
+
             img = resize(img, self.size)
             unlabeled_images.append(img)
             all_images.append(img)
