@@ -1,0 +1,12 @@
+{
+    "transforms_train" : [
+        {
+            "name" : "RandomPadandCrop"
+        },
+
+        {
+            "name" : "RandomFlip"
+        }
+    ],
+    "transforms_val" : []
+}

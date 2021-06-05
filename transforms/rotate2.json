@@ -1,0 +1,14 @@
+{
+    "transforms_train" : [
+        {
+            "name" : "RandomFlip"
+        },
+
+        {
+            "name" : "RandomPadRotate",
+            "degrees" : "15.0",
+            "interpolation" : "NEAREST"
+        }
+    ],
+    "transforms_val" : []
+}

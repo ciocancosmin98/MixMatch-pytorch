@@ -1,17 +1,25 @@
 import numpy as np
-from PIL import Image
 
 import torchvision
+import torchvision.transforms as transforms
+import torch.utils.data as data
 import torch
 
-class TransformTwice:
-    def __init__(self, transform):
-        self.transform = transform
+from dataset.transforms import TransformTwice, load_transforms
 
-    def __call__(self, inp):
-        out1 = self.transform(inp)
-        out2 = self.transform(inp)
-        return out1, out2
+def load_cifar10_default(root, batch_size, n_labeled, transforms_name):
+    print(f'==> Preparing cifar10')
+    transform_train, transform_val = load_transforms(transforms_name)
+
+    train_labeled_set, train_unlabeled_set, val_set, test_set = get_cifar10(root, n_labeled, transform_train=transform_train, transform_val=transform_val)
+    labeled_trainloader = data.DataLoader(train_labeled_set, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True)
+    unlabeled_trainloader = data.DataLoader(train_unlabeled_set, batch_size=batch_size, shuffle=True, num_workers=0, drop_last=True)
+    val_loader = data.DataLoader(val_set, batch_size=batch_size, shuffle=False, num_workers=0)
+    test_loader = data.DataLoader(test_set, batch_size=batch_size, shuffle=False, num_workers=0)
+
+    class_names = ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
+
+    return labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names
 
 def get_cifar10(root, n_labeled,
                  transform_train=None, transform_val=None,
@@ -59,61 +67,6 @@ def normalise(x, mean=cifar10_mean, std=cifar10_std):
 def transpose(x, source='NHWC', target='NCHW'):
     return x.transpose([source.index(d) for d in target]) 
 
-def pad(x, border=4):
-    return np.pad(x, [(0, 0), (border, border), (border, border)], mode='reflect')
-
-class RandomPadandCrop(object):
-    """Crop randomly the image.
-
-    Args:
-        output_size (tuple or int): Desired output size. If int, square crop
-            is made.
-    """
-
-    def __init__(self, output_size):
-        assert isinstance(output_size, (int, tuple))
-        if isinstance(output_size, int):
-            self.output_size = (output_size, output_size)
-        else:
-            assert len(output_size) == 2
-            self.output_size = output_size
-
-    def __call__(self, x):
-        x = pad(x, 4)
-
-        h, w = x.shape[1:]
-        new_h, new_w = self.output_size
-
-        top = np.random.randint(0, h - new_h)
-        left = np.random.randint(0, w - new_w)
-
-        x = x[:, top: top + new_h, left: left + new_w]
-
-        return x
-
-class RandomFlip(object):
-    """Flip randomly the image.
-    """
-    def __call__(self, x):
-        if np.random.rand() < 0.5:
-            x = x[:, :, ::-1]
-
-        return x.copy()
-
-class GaussianNoise(object):
-    """Add gaussian noise to the image.
-    """
-    def __call__(self, x):
-        c, h, w = x.shape
-        x += np.random.randn(c, h, w) * 0.15
-        return x
-
-class ToTensor(object):
-    """Transform the image to tensor.
-    """
-    def __call__(self, x):
-        x = torch.from_numpy(x)
-        return x
 
 class CIFAR10_labeled(torchvision.datasets.CIFAR10):
 

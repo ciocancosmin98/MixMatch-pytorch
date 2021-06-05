@@ -34,7 +34,7 @@ Hardwired to K == 2:
 
     TODO: rewrite the code so it generalises to arbitrary K
 
-
-RUN FASTER:
-    Try to use more of the gpu; Ideas:
-        - Use a larger batch size and fewer train iterations
+Test time limit:
+    For practical reasons, the run time might need to be limited. For
+    reference, a 24 hour run is roughly equivalent to 182 000 steps. A step
+    is an iteration in an epoch (the training on a single batch of data).
