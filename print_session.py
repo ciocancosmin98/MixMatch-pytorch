@@ -125,6 +125,7 @@ def show_test_images():
     ts._handle_resume(load_best=True)
 
     model.cpu()
+    model.eval()
 
     images = from_numpy(images)
     logits = model(images)
