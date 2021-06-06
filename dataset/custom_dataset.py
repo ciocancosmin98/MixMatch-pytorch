@@ -411,7 +411,7 @@ class ImageQueueReader:
         min_count = min(self.class_counts)
 
         test_perc = (1.0 - self.train_perc) / 2
-        n_test_per_class = int(min_count * test_perc)
+        n_test_per_class = min(int(min_count * test_perc), 50)
 
         val_start     = 0
         val_end       = val_start + n_test_per_class
