@@ -13,11 +13,13 @@ import torch.nn.parallel
 import torch.backends.cudnn as cudnn
 import torch.utils.data as data
 import torchvision.transforms as transforms
+from shutil import rmtree
 
 import models.wideresnet as models
 import dataset.cifar10 as dataset
 import dataset.custom_dataset as custom_ds
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig, confusion_matrix, plot_confusion_matrix, precision_recall
+from predict import show_test_images
 
 from session import SessionManager
 
@@ -81,7 +83,7 @@ parser.add_argument('--dataset-name', default='animals10', type=str, metavar='NA
 parser.add_argument('--session-id', default=-1, type=int, metavar='ID',
                     help='the id of the session to be resumed')
 
-argString = '--dataset-name cifar10 --n-labeled 10000 --enable-mixmatch true' #'--enable-mixmatch true'
+argString = '--dataset-name cifar10 --n-labeled 10000 --enable-mixmatch false' #'--enable-mixmatch true'
 args = parser.parse_args(shlex.split(argString))
 
 # Random seed
@@ -99,6 +101,10 @@ def main(base_path=None, output_path=None, args_string=None, categories=None, qu
     
     if not args_string is None:
         args = parser.parse_args(shlex.split(args_string))
+
+    if os.path.exists(output_path):
+        rmtree(output_path)
+        time.sleep(1)
 
     sm = SessionManager(args, session_path=output_path)
 
@@ -133,6 +139,8 @@ def main(base_path=None, output_path=None, args_string=None, categories=None, qu
         losses, accs, confs, names = validate_all(labeled_trainloader, val_loader, test_loader, train_loss, ts)
 
         tensorboard_write(writer, losses, accs, confs, names, class_names, step)
+
+        show_test_images(sm.spath, ts.model)
 
         # save model and other training variables
         sm.save_checkpoint(accs[names['validation']], epoch)
@@ -450,7 +458,7 @@ if __name__ == '__main__':
     queue = []
 
     base_path = 'data\\animals10\\images'
-    output_path = 'temporary\\cifar_session1'
+    output_path = 'temporary\\tmp_session1'
     categories = os.listdir(base_path)
 
     unlabeled_items = []
@@ -458,7 +466,7 @@ if __name__ == '__main__':
     for cat in categories:
         cat_path = os.path.join(base_path, cat)
 
-        img_fnames = os.listdir(cat_path)
+        img_fnames = os.listdir(cat_path)[:1000]
         for img_fname in img_fnames:
             unlabeled_items.append(create_item(cat, img_fname))
             labeled_items.append(create_item(cat, img_fname, cat))
@@ -467,7 +475,7 @@ if __name__ == '__main__':
     random.shuffle(labeled_items)
     
     queue.extend(unlabeled_items)
-    queue.extend(labeled_items[:2000])
+    queue.extend(labeled_items[:9000])
 
     main(
         base_path=base_path,

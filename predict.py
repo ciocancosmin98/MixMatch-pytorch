@@ -4,8 +4,9 @@ from torch import from_numpy
 import pickle
 import cv2
 import numpy as np
+import random
 
-from dataset.custom_dataset import Preprocessor
+from dataset.custom_dataset import Preprocessor, resize
 import models.wideresnet as models
 from session import TrainState
 
@@ -91,10 +92,91 @@ def predict2(image, session_dir):
 
     tmp_path = 'temporary_file0123456789.png'
     cv2.imwrite(tmp_path, image)
-    predict(tmp_path, session_dir)
+    result = predict(tmp_path, session_dir)
     if os.path.exists(tmp_path):
         os.remove(tmp_path)
 
+    return result
+
+def get_image(predictions, n_images_per_class=10):
+    random.seed(42)
+
+    SIZE = 64
+    TEXT_LEN = int(SIZE // 2 * 3)
+
+    n_classes = len(predictions.keys())
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale = 0.5 * SIZE / 64
+    color = (0, 0, 0)
+    thickness = 2
+
+    result = np.full((SIZE * n_classes, SIZE * n_images_per_class + TEXT_LEN, 3), fill_value=1.0)
+
+    for class_index, _class in enumerate(predictions):
+        index = 0
+        random.shuffle(predictions[_class])
+
+        if len(predictions[_class]) < n_images_per_class:
+            predictions[_class].extend([None] * n_images_per_class)
+
+        for index, fname in enumerate(predictions[_class]):
+            if index >= n_images_per_class:
+                break
+
+            start_y = SIZE * class_index
+            start_x = SIZE * index + TEXT_LEN
+
+            if fname is None:
+                img = np.ones((SIZE, SIZE, 3)) * 255
+            else:
+                img = cv2.imread(fname)
+                img = resize(img, size=SIZE)
+            
+            result[start_y : start_y + SIZE, start_x : start_x + SIZE, :] = img / 255
+            
+            start = (SIZE // 6, start_y + int(3 * SIZE / 4))
+            result = cv2.putText(result, _class, start, font, scale, color, thickness, cv2.LINE_AA)
+    
+    return result
+
+def show_test_images(session_dir, model):
+    test_fn = get_image_filenames(session_dir)
+
+    preprocessing_dir = os.path.join(session_dir, 'preprocessing')
+    prep = Preprocessor(test_fn, None, None, None, save_dir=preprocessing_dir, size=32, extract_one=True)
+    images, _ = prep.process_set(test_fn)
+
+    is_cuda = next(model.parameters()).is_cuda
+    model.cpu()
+    model.eval()
+
+    images = from_numpy(images)
+    logits = model(images)
+
+    if is_cuda:
+        model.cuda()
+
+    _, predictions = logits.topk(1, 1)
+    predictions = predictions.view(-1).numpy()
+    
+    all_fnames = []
+    for _class in test_fn:
+        all_fnames.extend(test_fn[_class])
+
+    class_names = prep.get_class_names()
+    preds_by_cat = {_class : [] for _class in class_names}
+    for fname, prediction in zip(all_fnames, predictions):
+        prediction = prep.int_2_str(prediction)
+        preds_by_cat[prediction].append(fname)
+
+    img = get_image(preds_by_cat)
+
+    images_dir = os.path.join(session_dir, 'images')
+    if not os.path.exists(images_dir):
+        os.makedirs(images_dir)
+
+    cv2.imwrite(os.path.join(images_dir, 'grid.jpg'), img * 255)
 
 """
 sess_dir = 'sessions\\oregon_wildlife\\1'
