@@ -5,6 +5,7 @@ import pickle
 import cv2
 import numpy as np
 import random
+import torch
 
 from dataset.custom_dataset import Preprocessor, resize
 import models.wideresnet as models
@@ -46,7 +47,7 @@ def get_image_filenames(session_dir):
     save_file = open(filename_list_path, "rb")
     _, _, val, test = pickle.load(save_file)
 
-    return test
+    return val
 
 def predict(image_path, session_dir):
     const_path = os.path.join(session_dir, 'const.pth.tar')
@@ -140,22 +141,18 @@ def get_image(predictions, n_images_per_class=10):
     
     return result
 
-def show_test_images(session_dir, model):
+def show_prediction_grid(session_dir, model):
     test_fn = get_image_filenames(session_dir)
 
     preprocessing_dir = os.path.join(session_dir, 'preprocessing')
     prep = Preprocessor(test_fn, None, None, None, save_dir=preprocessing_dir, size=32, extract_one=True)
     images, _ = prep.process_set(test_fn)
 
-    is_cuda = next(model.parameters()).is_cuda
-    model.cpu()
     model.eval()
 
-    images = from_numpy(images)
+    images = from_numpy(images).cuda()
     logits = model(images)
-
-    if is_cuda:
-        model.cuda()
+    logits = logits.cpu()
 
     _, predictions = logits.topk(1, 1)
     predictions = predictions.view(-1).numpy()

@@ -19,7 +19,8 @@ import models.wideresnet as models
 import dataset.cifar10 as dataset
 import dataset.custom_dataset as custom_ds
 from utils import Bar, Logger, AverageMeter, accuracy, mkdir_p, savefig, confusion_matrix, plot_confusion_matrix, precision_recall
-from predict import show_test_images
+from predict import show_prediction_grid
+from dataset.transforms import transpose
 
 from session import SessionManager
 
@@ -83,14 +84,13 @@ parser.add_argument('--dataset-name', default='animals10', type=str, metavar='NA
 parser.add_argument('--session-id', default=-1, type=int, metavar='ID',
                     help='the id of the session to be resumed')
 
-argString = '--dataset-name cifar10 --n-labeled 10000 --enable-mixmatch false' #'--enable-mixmatch true'
+argString = '--dataset-name cifar10 --n-labeled 10000 --enable-mixmatch false --use-pretrained' #'--enable-mixmatch true'
 args = parser.parse_args(shlex.split(argString))
 
 # Random seed
 if args.manualSeed is None:
     args.manualSeed = random.randint(1, 10000)
 np.random.seed(args.manualSeed)
-
 
 def main(base_path=None, output_path=None, args_string=None, categories=None, queue=None, sendMetrics=None):
     global constants
@@ -132,20 +132,34 @@ def main(base_path=None, output_path=None, args_string=None, categories=None, qu
         step = constants['train_iteration'] * (epoch + 1)
 
         if constants['enable_mixmatch']:
-            train_loss = train(labeled_trainloader, unlabeled_trainloader, epoch, ts)
+            train(labeled_trainloader, unlabeled_trainloader, epoch, ts)
         else:
-            train_loss = train_supervised(labeled_trainloader, epoch, ts)
+            train_supervised(labeled_trainloader, epoch, ts)
 
-        losses, accs, confs, names = validate_all(labeled_trainloader, val_loader, test_loader, train_loss, ts)
+        losses, accs, confs, names = validate_all(labeled_trainloader, val_loader, test_loader, ts)
 
-        tensorboard_write(writer, losses, accs, confs, names, class_names, step)
+        confusion = tensorboard_write(writer, losses, accs, confs, names, class_names, step)
 
-        show_test_images(sm.spath, ts.model)
+        save_confusion(confusion, sm.spath)
+
+        show_prediction_grid(sm.spath, ts.ema_model)
 
         # save model and other training variables
         sm.save_checkpoint(accs[names['validation']], epoch)
 
     sm.close()
+
+def save_confusion(confusion, session_dir):
+    confusion = confusion.numpy()
+    confusion = transpose(confusion, source='CHW', target='HWC')
+    
+    confusion = confusion[:, :, :3]
+    confusion = cv2.cvtColor(confusion, cv2.COLOR_RGB2BGR)
+
+    images_dir = os.path.join(session_dir, 'images')
+    if not os.path.exists(images_dir):
+        os.makedirs(images_dir)
+    cv2.imwrite(os.path.join(images_dir, 'confusion.jpg'), confusion * 255)
 
 def iterate_with_restart(loader, iterator):
     try:
@@ -293,7 +307,7 @@ def train(labeled_trainloader, unlabeled_trainloader, epoch, train_state):
         bar.next()
     bar.finish()
 
-    return losses.avg
+    #return losses.avg
 
 def train_supervised(labeled_trainloader, epoch, train_state):
     model = train_state.model
@@ -374,8 +388,8 @@ def tensorboard_write(writer, losses, accs, confs, set_names, class_names, step)
         writer.add_scalar('losses/' + name + '_loss', loss, step)
         writer.add_scalar('accuracy/' + name + '_acc', acc, step)
 
-    img_conf_val = plot_confusion_matrix(confs[set_names['validation']], class_names)
-    writer.add_image('confusion/val', img_conf_val, step)
+    img_conf = plot_confusion_matrix(confs[set_names['validation']], class_names)
+    writer.add_image('confusion/val', img_conf, step)  
 
     val_pre, val_rec = precision_recall(confs[set_names['validation']])
 
@@ -383,8 +397,10 @@ def tensorboard_write(writer, losses, accs, confs, set_names, class_names, step)
         writer.add_scalar('precision/val/' + class_names[i], val_pre[i], step)
         writer.add_scalar('recall/val/' + class_names[i], val_rec[i], step)
 
-def validate_all(train_loader, val_loader, test_loader, train_loss, train_state):
-    _, train_acc, train_confusion = validate(train_loader, train_state)
+    return img_conf
+
+def validate_all(train_loader, val_loader, test_loader, train_state):
+    train_loss, train_acc, train_confusion = validate(train_loader, train_state)
     val_loss, val_acc, val_confusion = validate(val_loader, train_state)
     test_loss, test_acc, test_confusion = validate(test_loader, train_state)
 
