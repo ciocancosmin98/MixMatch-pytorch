@@ -81,14 +81,14 @@ parser.add_argument('--dataset-name', default='animals10', type=str, metavar='NA
 parser.add_argument('--session-id', default=-1, type=int, metavar='ID',
                     help='the id of the session to be resumed')
 
-argString = '--dataset-name cifar10 --n-labeled 10000 --enable-mixmatch false' #'--enable-mixmatch true'
+argString = '--dataset-name cifar10 --n-labeled 10000 --enable-mixmatch true' #'--enable-mixmatch true'
 args = parser.parse_args(shlex.split(argString))
 
 # Random seed
 if args.manualSeed is None:
     args.manualSeed = random.randint(1, 10000)
 np.random.seed(args.manualSeed)
-      
+
 
 def main(base_path=None, output_path=None, args_string=None, categories=None, queue=None, sendMetrics=None):
     global constants
@@ -100,12 +100,24 @@ def main(base_path=None, output_path=None, args_string=None, categories=None, qu
     if not args_string is None:
         args = parser.parse_args(shlex.split(args_string))
 
-    sm = SessionManager(dataset_name=args.dataset_name, resume_id=args.session_id, session_path=output_path)
-    
-    labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names, constants = \
-            sm.load_dataset(args)
+    sm = SessionManager(args, session_path=output_path)
 
-    ts, writer = sm.load_checkpoint(class_names, constants)
+    if not queue is None:
+        sm.add_constants([
+            # list of the names of the classes to be trained on
+            ('class_names', categories),
+            # the root location where images from the queue will be extracted from
+            ('base_path', base_path)
+        ])
+    
+    labeled_trainloader, unlabeled_trainloader, val_loader, test_loader = \
+            sm.load_dataset(queue)
+
+    ts, writer = sm.load_checkpoint()
+
+    constants = sm.get_constants()
+
+    class_names = constants['class_names']
 
     step = 0
     # Train and val
@@ -420,7 +432,6 @@ def interleave_offsets(batch, nu):
 
 
 def interleave(xy, batch):
-    #print(xy[0].shape)
     nu = len(xy) - 1
     offsets = interleave_offsets(batch, nu)
     xy = [[v[offsets[p]:offsets[p + 1]] for p in range(nu + 1)] for v in xy]
@@ -428,5 +439,41 @@ def interleave(xy, batch):
         xy[0][i], xy[i][i] = xy[i][i], xy[0][i]
     return [torch.cat(v, dim=0) for v in xy]
 
+def create_item(id_folder, id_file, category='unclassified'):
+    return {
+        'id_folder' : id_folder,
+        'id_file'   : id_file,
+        'category'  : category
+    }
+
 if __name__ == '__main__':
-    main(base_path=None, output_path='temporary\\cifar_session1', args_string=None, categories=None, queue=None, sendMetrics=None)
+    queue = []
+
+    base_path = 'data\\animals10\\images'
+    output_path = 'temporary\\cifar_session1'
+    categories = os.listdir(base_path)
+
+    unlabeled_items = []
+    labeled_items = []
+    for cat in categories:
+        cat_path = os.path.join(base_path, cat)
+
+        img_fnames = os.listdir(cat_path)
+        for img_fname in img_fnames:
+            unlabeled_items.append(create_item(cat, img_fname))
+            labeled_items.append(create_item(cat, img_fname, cat))
+
+    random.shuffle(unlabeled_items)
+    random.shuffle(labeled_items)
+    
+    queue.extend(unlabeled_items)
+    queue.extend(labeled_items[:2000])
+
+    main(
+        base_path=base_path,
+        output_path=output_path,
+        args_string=None,
+        categories=categories,
+        queue=queue,
+        sendMetrics=None
+    )

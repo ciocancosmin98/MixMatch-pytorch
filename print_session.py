@@ -31,6 +31,7 @@ parser.add_argument('--verbose', '-v', action="store_true",
                     help='show more information')
 parser.add_argument('--show-predictions', '-s', default=-1, type=int, metavar='N_IMAGES',
                     help='number of images per class to predict on')
+parser.add_argument('--session-path', default=None, type=str)
 
 args = parser.parse_args()
 
@@ -105,7 +106,7 @@ def get_image(predictions):
     
 
 def show_test_images():
-    session_dir = os.path.join('sessions', args.dataset_name, str(_id))
+    #session_dir = os.path.join('sessions', args.dataset_name, str(_id))
 
     const_path = os.path.join(session_dir, 'const.pth.tar')
     if not os.path.exists(const_path):
@@ -149,39 +150,42 @@ def show_test_images():
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
+if args.session_path is None:
+    if args.session_id == -1:
+        max_id = -1
+        sessions_dir = os.path.join('sessions', args.dataset_name)
+        for fname in os.listdir(sessions_dir):
+            try:
+                _id = int(fname)
 
-if args.session_id == -1:
-    max_id = -1
-    sessions_dir = os.path.join('sessions', args.dataset_name)
-    for fname in os.listdir(sessions_dir):
-        try:
-            _id = int(fname)
+                if _id >= max_id:
+                    max_id = _id
+            except ValueError:
+                pass
 
-            if _id >= max_id:
-                max_id = _id
-        except ValueError:
-            pass
-
-    if max_id == -1:
-        raise Exception("Could not find any sessions using the dataset " + \
-            args.dataset_name + ".")
-    _id = max_id
+        if max_id == -1:
+            raise Exception("Could not find any sessions using the dataset " + \
+                args.dataset_name + ".")
+        _id = max_id
+    else:
+        session_dir = os.path.join('sessions', args.dataset_name, str(args.session_id))
+        if not os.path.exists(session_dir):
+            raise Exception("Could not find session " + str(args.session_id) + \
+                " using the dataset " + args.dataset_name + ".")
+        _id = args.session_id
+    session_dir = os.path.join('sessions', args.dataset_name, str(_id))
 else:
-    session_dir = os.path.join('sessions', args.dataset_name, str(args.session_id))
-    if not os.path.exists(session_dir):
-        raise Exception("Could not find session " + str(args.session_id) + \
-            " using the dataset " + args.dataset_name + ".")
-    _id = args.session_id
+    session_dir = args.session_path
 
 if args.show_predictions > 0:
     show_test_images()
     exit(0)
 
-const_path = os.path.join('sessions', args.dataset_name, str(_id), 'const.pth.tar')
+const_path = os.path.join(session_dir, 'const.pth.tar')
 if not os.path.exists(const_path):
     raise Exception("Session exists but is not properly initialized: missing constants")
     
-checkpoint_path = os.path.join('sessions', args.dataset_name, str(_id), 'training', 'checkpoint.pth.tar')
+checkpoint_path = os.path.join(session_dir, 'training', 'checkpoint.pth.tar')
 if not os.path.exists(checkpoint_path):
     raise Exception("Session exists but hasn't saved a checkpoint yet")
 
@@ -210,7 +214,10 @@ def print_list(list_name, short_list, verbose_list, dictionary):
         print_value(name, args.verbose)
 
 constants = load(const_path)
-constants['session_id'] = _id
+try:
+    constants['session_id'] = _id
+except:
+    constants['session_id'] = -1
 print_list('CONSTANT', short_consts, verbose_consts, constants)
 
 variables = load(checkpoint_path)

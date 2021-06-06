@@ -166,8 +166,11 @@ class TrainState:
             shutil.copyfile(self.save_path, self.best_path)
 
 class SessionManager:
-    def __init__(self, dataset_name='animals10', sessions_root='sessions',
-            datasets_root='data', resume_id=-1, session_path=None):
+    def __init__(self, args, sessions_root='sessions',
+            datasets_root='data', session_path=None):
+
+        dataset_name = args.dataset_name
+        resume_id    = args.session_id
 
         self.dname = dataset_name
         self.droot = datasets_root
@@ -207,6 +210,8 @@ class SessionManager:
             os.makedirs(preprocessing_dir)
         self.pdir = preprocessing_dir
 
+        self.constants = self.load_constants(args)
+
     
     def load_constants(self, args):
         const_path = os.path.join(self.spath, 'const.pth.tar')
@@ -238,25 +243,48 @@ class SessionManager:
         constants[name] = value
         save(constants, const_path)
 
-        return constants
+        self.constants = constants
 
+    def add_constants(self, new_constants):
+        const_path = os.path.join(self.spath, 'const.pth.tar')
 
-    def load_dataset(self, args):
-        constants = self.load_constants(args)
-        batch_size = constants['batch_size']
-        n_labeled  = constants['n_labeled']
-        transforms_name = constants['transforms']
+        constants = load(const_path)
+        for name, value in new_constants:
+            constants[name] = value
+        
+        save(constants, const_path)
+        self.constants = constants
 
-        if self.dname == "cifar10":
+    def get_constants(self):
+        return self.constants
+
+    def load_dataset(self, queue=None):
+        batch_size = self.constants['batch_size']
+        n_labeled  = self.constants['n_labeled']
+        transforms_name = self.constants['transforms']
+
+        if not queue is None:
+            qReader = cds.ImageQueueReader(queue, self.constants['base_path'],
+                            self.constants['class_names'], self.spath)
+
+            while not qReader.tick():
+                pass
+
+            labeled_fn, unlabeled_fn, val_fn, test_fn = qReader.split()
+
+            prep = cds.Preprocessor(labeled_fn, unlabeled_fn, val_fn, test_fn, save_dir=self.pdir, overwrite=False, size=32)
+
+            labeled_trainloader, unlabeled_trainloader, val_loader, test_loader = \
+                    cds.load_custom(prep, batch_size, transforms_name)
+        elif self.dname == "cifar10":
             # load cifar-10
-
             cifar_dir = os.path.join(self.droot, 'cifar10')
             labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names = \
                     cifar10.load_cifar10_default(cifar_dir, batch_size, n_labeled, transforms_name)
         else:
             # load custom dataset
             labeled_fn, unlabeled_fn, val_fn, test_fn = cds.get_filenames_train_validate_test(self.dname, 
-                    self.pdir, constants['n_labeled'], constants['balance_unlabeled'], constants['n_test_per_class'])
+                    self.pdir, self.constants['n_labeled'], self.constants['balance_unlabeled'], self.constants['n_test_per_class'])
 
             prep = cds.Preprocessor(labeled_fn, unlabeled_fn, val_fn, test_fn, save_dir=self.pdir, overwrite=False, size=32)
 
@@ -265,22 +293,26 @@ class SessionManager:
 
             class_names = prep.get_class_names()
 
-        if not 'train_iteration' in constants:
+        if not 'class_names' in self.constants:
+            self.add_constant('class_names', class_names)
+
+        if not 'train_iteration' in self.constants:
             min_iterations = 32
 
-            if not constants['enable_mixmatch']:
+            if not self.constants['enable_mixmatch']:
                 train_iteration = max(len(labeled_trainloader), min_iterations)
             else:
                 train_iteration = max(max(len(labeled_trainloader), len(unlabeled_trainloader)), min_iterations)
             
-            constants = self.add_constant('train_iteration', train_iteration)
+            self.add_constant('train_iteration', train_iteration)
 
-        return labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names, constants
+        return labeled_trainloader, unlabeled_trainloader, val_loader, test_loader
 
-    def load_checkpoint(self, class_names, constants):
+    def load_checkpoint(self):
+        class_names = self.constants['class_names']
         model, ema_model = get_wideresnet_models(len(class_names))
 
-        self.ts = TrainState(model, ema_model, class_names, constants, self.spath)
+        self.ts = TrainState(model, ema_model, class_names, self.constants, self.spath)
         self.ts._handle_resume()
         
         self.writer = SummaryWriter(self.wdir)
