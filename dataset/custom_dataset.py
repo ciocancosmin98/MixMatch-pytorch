@@ -9,6 +9,7 @@ import sys
 import dataset.cifar10 as dataset
 import torchvision.transforms as transforms
 import torch.utils.data as data
+import time
 
 from torch.utils.data import Dataset, DataLoader
 
@@ -443,3 +444,94 @@ def get_filenames_train_validate_test(dataset_name, session_path, n_labeled=1000
     save_file.close()
 
     return labeled, unlabeled, val, test
+
+class ImageQueueReader:
+    def __init__(self, queue, base_path, categories, session_dir, min_train_per_class=50, train_perc=0.5):
+        self.queue = queue
+        self.categories = categories
+        self.base_path = base_path
+        self.train_perc = train_perc
+        self.session_dir = session_dir
+
+        # when all classes have at least min_per_class labeled images, the tick
+        # function will return True, meaning you can do the train test val
+        # split and continue with the training;
+        self.min_train_per_class = min_train_per_class
+        self.class_counts = [0] * len(categories)
+
+        self.str_2_int = {cat : index for index, cat in enumerate(categories)}
+
+        self.unlabeled_fn = set()
+
+        self.all_labeled_fn = {cat : [] for cat in categories}
+
+    def _read_queue(self):
+        while len(self.queue) > 0:
+            img_info = self.queue.pop(0)
+
+            file_id   = img_info['id_file']
+            folder_id = img_info['id_folder']
+            category  = img_info['category']
+
+            img_path = os.path.join(self.base_path, folder_id, file_id)
+
+            if category == 'unclassified':
+                self.unlabeled_fn.add(img_path)
+            else:
+                if img_path in self.unlabeled_fn:
+                    self.unlabeled_fn.remove(img_path)
+                
+                index = self.str_2_int[category]
+                self.all_labeled_fn[category].append(img_path)
+                self.class_counts[index] += 1
+
+    def tick(self):
+        self._read_queue()
+
+        if int(self.train_perc * min(self.class_counts)) < self.min_train_per_class:
+            time.sleep(30)
+            return False
+        
+        return True
+
+    def split(self):
+        import pickle
+
+        labeled_fn = {cat : [] for cat in self.categories}
+        test_fn = {cat : [] for cat in self.categories}
+        val_fn = {cat : [] for cat in self.categories}
+
+        min_count = min(self.class_counts)
+
+        test_perc = (1.0 - self.train_perc) / 2
+        n_test_per_class = int(min_count * test_perc)
+
+        print('N_TEST_PER_CLASS', n_test_per_class)
+
+        val_start     = 0
+        val_end       = val_start + n_test_per_class
+        test_start    = val_end
+        test_end      = test_start + n_test_per_class
+        labeled_start = test_end
+        labeled_end   = min_count
+
+        #print('MIN COUNT', min_count)
+
+        print(val_start, val_end)
+        print(test_start, test_end)
+        print(labeled_start, labeled_end)
+
+        for cls in self.all_labeled_fn:        
+            val_fn[cls]     = self.all_labeled_fn[cls][      val_start :     val_end]
+            test_fn[cls]    = self.all_labeled_fn[cls][     test_start :    test_end]
+            labeled_fn[cls] = self.all_labeled_fn[cls][  labeled_start : labeled_end]
+
+        unlabeled_fn = list(self.unlabeled_fn)
+
+        save_path = os.path.join(self.session_dir, 'preprocessing', 'filenames_list.pkl')
+        data = (labeled_fn, unlabeled_fn, val_fn, test_fn)
+        save_file = open(save_path, "wb")
+        pickle.dump(data, save_file)
+        save_file.close()
+
+        return labeled_fn, unlabeled_fn, val_fn, test_fn
