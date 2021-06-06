@@ -88,17 +88,19 @@ args = parser.parse_args(shlex.split(argString))
 if args.manualSeed is None:
     args.manualSeed = random.randint(1, 10000)
 np.random.seed(args.manualSeed)
+      
 
 def main(base_path=None, output_path=None, args_string=None, categories=None, queue=None, sendMetrics=None):
     global constants
     global args
+
     # enable cudnn auto-tuner to find the best algorithm for the given harware
     cudnn.benchmark = True
     
     if not args_string is None:
         args = parser.parse_args(shlex.split(args_string))
 
-    sm = SessionManager(dataset_name=args.dataset_name, resume_id=args.session_id)
+    sm = SessionManager(dataset_name=args.dataset_name, resume_id=args.session_id, session_path=output_path)
     
     labeled_trainloader, unlabeled_trainloader, val_loader, test_loader, class_names, constants = \
             sm.load_dataset(args)
@@ -427,4 +429,4 @@ def interleave(xy, batch):
     return [torch.cat(v, dim=0) for v in xy]
 
 if __name__ == '__main__':
-    main()
+    main(base_path=None, output_path='temporary\\cifar_session1', args_string=None, categories=None, queue=None, sendMetrics=None)

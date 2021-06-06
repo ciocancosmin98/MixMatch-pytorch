@@ -167,33 +167,34 @@ class TrainState:
 
 class SessionManager:
     def __init__(self, dataset_name='animals10', sessions_root='sessions',
-            datasets_root='data', resume_id=-1):
+            datasets_root='data', resume_id=-1, session_path=None):
 
         self.dname = dataset_name
-        self.sroot = sessions_root
         self.droot = datasets_root
         self.id    = resume_id
 
-        session_dir = os.path.join(self.sroot, self.dname)
+        if session_path is None:
+            session_dir = os.path.join(sessions_root, self.dname)
 
-        if not os.path.exists(session_dir):
-            os.makedirs(session_dir)
+            if not os.path.exists(session_dir):
+                os.makedirs(session_dir)
 
-        if self.id == -1:
-            next_id = 0
-            for fname in os.listdir(session_dir):
-                try:
-                    _id = int(fname)
+            if self.id == -1:
+                next_id = 0
+                for fname in os.listdir(session_dir):
+                    try:
+                        _id = int(fname)
 
-                    if _id >= next_id:
-                        next_id = _id + 1
-                except ValueError:
-                    pass
-            self.id = next_id
+                        if _id >= next_id:
+                            next_id = _id + 1
+                    except ValueError:
+                        pass
+                self.id = next_id
 
-        session_path = os.path.join(session_dir, str(self.id))
-        if not os.path.exists(session_path):
-            os.makedirs(session_path)
+            session_path = os.path.join(session_dir, str(self.id))
+            if not os.path.exists(session_path):
+                os.makedirs(session_path)        
+
         self.spath = session_path
 
         writer_dir = os.path.join(self.spath, 'tensorboard')
