@@ -81,22 +81,25 @@ def get_image(predictions):
     result = np.full((SIZE * n_classes, SIZE * args.show_predictions + TEXT_LEN, 3), fill_value=1.0)
 
     for class_index, _class in enumerate(predictions):
-        if len(predictions[_class]) < args.show_predictions:
-            raise Exception("Not enough predictions from class", _class, 
-                    "to satisfy --show-predictions", args.show_predictions)
-    
         index = 0
-
         random.shuffle(predictions[_class])
+
+        if len(predictions[_class]) < args.show_predictions:
+            predictions[_class].extend([None] * args.show_predictions)
+
         for index, fname in enumerate(predictions[_class]):
             if index >= args.show_predictions:
                 break
 
             start_y = SIZE * class_index
             start_x = SIZE * index + TEXT_LEN
-            img = cv2.imread(fname)
-            #img = resize_and_split(img, careful=False, max_aspect_ratio=3, min_new_info=999999, size=SIZE)[0]
-            img = resize(img, size=SIZE)
+
+            if fname is None:
+                img = np.ones((SIZE, SIZE, 3)) * 255
+            else:
+                img = cv2.imread(fname)
+                img = resize(img, size=SIZE)
+            
             result[start_y : start_y + SIZE, start_x : start_x + SIZE, :] = img / 255
             
             start = (SIZE // 6, start_y + int(3 * SIZE / 4))
