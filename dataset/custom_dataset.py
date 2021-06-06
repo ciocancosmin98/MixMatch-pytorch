@@ -127,16 +127,6 @@ class Preprocessor:
             int_label = self.str_2_int(cls)
             imgs_cls = []
             for fname in fnames[cls]:
-                #img = cv2.imread(fname)
-
-                """
-                if self.extract_one:
-                    imgs = resize_and_split(img, min_new_info=99999999, careful=False,
-                                    size=self.size)
-                else:
-                    imgs = resize_and_split(img, min_new_info=self.min_new_info,
-                                    size=self.size)
-                """
                 try:
                     img = cv2.imread(fname)
                 except:
@@ -178,11 +168,6 @@ class Preprocessor:
         unlabeled_images = []
         all_images = []
         for fname in self.unlabeled_fn:
-            #img = cv2.imread(fname)
-            """
-            imgs = resize_and_split(img, min_new_info=self.min_new_info,
-                                size=self.size)
-            """
             try:
                 img = cv2.imread(fname)
             except:
@@ -256,8 +241,6 @@ class Preprocessor:
         return self.npzfile[name]
         
     def preprocess(self, img):
-        #return resize_and_split(img, min_new_info=self.min_new_info,
-        #                        size=self.size)
         return resize(img, self.size)
         
     def get_class_names(self):
@@ -269,38 +252,6 @@ class Preprocessor:
     def str_2_int(self, str_label):
         return self._str_2_int[str_label]
 
-"""
-def resize_and_split(img, careful=True, max_aspect_ratio=3, min_new_info=0.2, size=128):
-    height, width = img.shape[0], img.shape[1]
-    min_dim = min(height, width)
-    scaling = min_dim / size
-    new_height = int(height / scaling)
-    new_width = int(width / scaling)
-    img_1 = cv2.resize(img, (new_width, new_height))
-    
-    max_dim = max(new_height, new_width)
-    ratio = max_dim / size
-    if ratio > max_aspect_ratio and careful:
-        # The aspect ratio of the image is too big; we cannot extract
-        # a square portion of this image and have it still represent
-        # the class as a whole
-        return []
-    
-    def add_img(result_imgs, start_x, start_y):
-        img_tmp = img_1[start_y:start_y+size, start_x:start_x+size]
-        result_imgs.append(img_tmp)
-    
-    result_imgs = []
-    if ratio > (1 + min_new_info):
-        add_img(result_imgs, 0, 0)
-        add_img(result_imgs, new_width - size, new_height - size)
-    else:
-        start_x = np.random.randint(0, new_width  - size + 1)
-        start_y = np.random.randint(0, new_height - size + 1)
-        add_img(result_imgs, start_x, start_y)
-    
-    return result_imgs
-"""
 def resize(img, size=128):
     height, width = img.shape[0], img.shape[1]
     min_dim = min(height, width)
@@ -312,24 +263,6 @@ def resize(img, size=128):
     y_start = new_height // 2 - size // 2
     x_start = new_width // 2 - size // 2
     return img[y_start : y_start + size, x_start : x_start + size, :]
-    """
-    max_dim = max(new_height, new_width)
-    ratio = max_dim / size
-    def add_img(result_imgs, start_x, start_y):
-        img_tmp = img_1[start_y:start_y+size, start_x:start_x+size]
-        result_imgs.append(img_tmp)
-    
-    result_imgs = []
-    if ratio > (1 + min_new_info):
-        add_img(result_imgs, 0, 0)
-        add_img(result_imgs, new_width - size, new_height - size)
-    else:
-        start_x = np.random.randint(0, new_width  - size + 1)
-        start_y = np.random.randint(0, new_height - size + 1)
-        add_img(result_imgs, start_x, start_y)
-    
-    return result_imgs
-    """
 
 def get_filenames(dataset_path):
     import random
@@ -356,32 +289,6 @@ def get_filenames(dataset_path):
         random.shuffle(filenames[cls])
 
     return filenames, classes
-
-"""
-def get_fnames128(dataset_path):
-    fnames_128 = {}
-
-    filenames, classes = get_filenames(dataset_path)
-
-    for cls in filenames:
-        fnames_128[cls] = []
-        for fname in filenames[cls]:
-            try:
-                img = cv2.imread(fname)
-            except:
-                print('EXCEPTION READING')
-                continue
-                
-            if img is None:
-                print('IMG IS NONE')
-                continue
-                
-            height, width = img.shape[0], img.shape[1]
-            if height >= 128 and width >= 128:
-                fnames_128[cls].append(fname)
-
-    return fnames_128, classes
-"""
 
 def get_filenames_train_validate_test(dataset_name, session_path, n_labeled=1000, balance_unlabeled=False, n_test_per_class=100):
     import pickle, os
@@ -506,20 +413,12 @@ class ImageQueueReader:
         test_perc = (1.0 - self.train_perc) / 2
         n_test_per_class = int(min_count * test_perc)
 
-        print('N_TEST_PER_CLASS', n_test_per_class)
-
         val_start     = 0
         val_end       = val_start + n_test_per_class
         test_start    = val_end
         test_end      = test_start + n_test_per_class
         labeled_start = test_end
         labeled_end   = min_count
-
-        #print('MIN COUNT', min_count)
-
-        print(val_start, val_end)
-        print(test_start, test_end)
-        print(labeled_start, labeled_end)
 
         for cls in self.all_labeled_fn:        
             val_fn[cls]     = self.all_labeled_fn[cls][      val_start :     val_end]
