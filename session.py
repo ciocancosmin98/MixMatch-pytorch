@@ -148,6 +148,9 @@ class TrainState:
         elif self.constants['use_pretrained'] and os.path.exists(self.pretrained_path):
             self._transfer_weights()
 
+    def is_best(self, val_acc):
+        return val_acc > self.best_acc
+
     def _save_checkpoint(self, val_acc, epoch):
         is_best = val_acc > self.best_acc
         self.best_acc = max(val_acc, self.best_acc)

@@ -141,7 +141,7 @@ def get_image(predictions, n_images_per_class=10):
     
     return result
 
-def show_prediction_grid(session_dir, model):
+def show_prediction_grid(session_dir, model, is_best):
     test_fn = get_image_filenames(session_dir)
 
     preprocessing_dir = os.path.join(session_dir, 'preprocessing')
@@ -167,13 +167,16 @@ def show_prediction_grid(session_dir, model):
         prediction = prep.int_2_str(prediction)
         preds_by_cat[prediction].append(fname)
 
-    img = get_image(preds_by_cat)
+    img = get_image(preds_by_cat) * 255
 
     images_dir = os.path.join(session_dir, 'images')
     if not os.path.exists(images_dir):
         os.makedirs(images_dir)
 
-    cv2.imwrite(os.path.join(images_dir, 'grid.jpg'), img * 255)
+    cv2.imwrite(os.path.join(images_dir, 'grid_current.jpg'), img)
+
+    if is_best:
+        cv2.imwrite(os.path.join(images_dir, 'grid_best.jpg'), img)
 
 """
 sess_dir = 'sessions\\oregon_wildlife\\1'

@@ -119,9 +119,11 @@ def main(base_path=None, output_path=None, args_string=None, categories=None, qu
 
         confusion = tensorboard_write(writer, losses, accs, confs, names, class_names, step)
 
-        save_confusion(confusion, sm.spath)
+        is_best = ts.is_best(accs[names['validation']])
 
-        show_prediction_grid(sm.spath, ts.ema_model)
+        save_confusion(confusion, sm.spath, is_best)
+
+        show_prediction_grid(sm.spath, ts.ema_model, is_best)
 
         send_metrics(sendMetrics, constants, epoch + 1, losses, accs, names)
 
@@ -142,17 +144,20 @@ def send_metrics(sendMetrics, constants, epoch, losses, accs, set_names):
 
     sendMetrics(metrics)
 
-def save_confusion(confusion, session_dir):
+def save_confusion(confusion, session_dir, is_best):
     confusion = confusion.numpy()
     confusion = transpose(confusion, source='CHW', target='HWC')
     
     confusion = confusion[:, :, :3]
-    confusion = cv2.cvtColor(confusion, cv2.COLOR_RGB2BGR)
+    confusion = cv2.cvtColor(confusion, cv2.COLOR_RGB2BGR) * 255
 
     images_dir = os.path.join(session_dir, 'images')
     if not os.path.exists(images_dir):
         os.makedirs(images_dir)
-    cv2.imwrite(os.path.join(images_dir, 'confusion.jpg'), confusion * 255)
+    cv2.imwrite(os.path.join(images_dir, 'confusion_current.jpg'), confusion)
+
+    if is_best:       
+        cv2.imwrite(os.path.join(images_dir, 'confusion_best.jpg'), confusion)
 
 def iterate_with_restart(loader, iterator):
     try:
@@ -299,8 +304,6 @@ def train(labeled_trainloader, unlabeled_trainloader, epoch, train_state):
                     )
         bar.next()
     bar.finish()
-
-    #return losses.avg
 
 def train_supervised(labeled_trainloader, epoch, train_state):
     model = train_state.model
@@ -462,8 +465,6 @@ def create_item(id_folder, id_file, category='unclassified'):
         'id_file'   : id_file,
         'category'  : category
     }
-
-#def create_test(dataset_name, output_path, )
 
 if __name__ == '__main__':
     queue = []
