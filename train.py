@@ -84,23 +84,20 @@ parser.add_argument('--dataset-name', default='animals10', type=str, metavar='NA
 parser.add_argument('--session-id', default=-1, type=int, metavar='ID',
                     help='the id of the session to be resumed')
 
-argString = '--dataset-name cifar10 --n-labeled 10000 --enable-mixmatch false --use-pretrained' #'--enable-mixmatch true'
-args = parser.parse_args(shlex.split(argString))
-
-# Random seed
-if args.manualSeed is None:
-    args.manualSeed = random.randint(1, 10000)
-np.random.seed(args.manualSeed)
-
 def main(base_path=None, output_path=None, args_string=None, categories=None, queue=None, sendMetrics=None):
     global constants
-    global args
 
     # enable cudnn auto-tuner to find the best algorithm for the given harware
     cudnn.benchmark = True
     
-    if not args_string is None:
-        args = parser.parse_args(shlex.split(args_string))
+    if args_string is None:
+        raise Exception('No arguments were provided.')
+
+    args = parser.parse_args(shlex.split(args_string))
+
+    if args.manualSeed is None:
+        args.manualSeed = random.randint(1, 10000)
+    np.random.seed(args.manualSeed)
 
     if os.path.exists(output_path):
         rmtree(output_path)
@@ -125,8 +122,6 @@ def main(base_path=None, output_path=None, args_string=None, categories=None, qu
 
     class_names = constants['class_names']
 
-    step = 0
-    # Train and val
     for epoch in range(ts.start_epoch, constants['epochs']):
         print('\nEpoch: [%d | %d]' % (epoch + 1, constants['epochs']))
         step = constants['train_iteration'] * (epoch + 1)
@@ -144,10 +139,24 @@ def main(base_path=None, output_path=None, args_string=None, categories=None, qu
 
         show_prediction_grid(sm.spath, ts.ema_model)
 
-        # save model and other training variables
+        send_metrics(sendMetrics, constants, epoch + 1, losses, accs, names)
+
+        # save the model and other training variables
         sm.save_checkpoint(accs[names['validation']], epoch)
 
     sm.close()
+
+def send_metrics(sendMetrics, constants, epoch, losses, accs, set_names):
+    metrics = {}
+
+    metrics['current_epoch'] = epoch
+    metrics['progress'] = epoch / constants['epochs']
+
+    for loss, acc, name in zip(losses, accs, set_names):
+        metrics[name + '_loss'] = loss
+        metrics[name + '_acc']  = acc
+
+    sendMetrics(metrics)
 
 def save_confusion(confusion, session_dir):
     confusion = confusion.numpy()
@@ -493,11 +502,15 @@ if __name__ == '__main__':
     queue.extend(unlabeled_items)
     queue.extend(labeled_items[:9000])
 
+    sendMetrics = lambda metrics : print(metrics)
+
+    args_string = '--dataset-name cifar10 --n-labeled 10000 --enable-mixmatch false --use-pretrained'
+
     main(
         base_path=base_path,
         output_path=output_path,
-        args_string=None,
+        args_string=args_string,
         categories=categories,
         queue=queue,
-        sendMetrics=None
+        sendMetrics=sendMetrics
     )
