@@ -100,7 +100,7 @@ def plot_confusion_matrix(confusion, class_names):
                 i, j, confusion[j, i], horizontalalignment="center", color=color
             )
 
-    plt.tight_layout()
+    plt.tight_layout(pad=2)
     plt.xlabel("Predicted Label")
     plt.ylabel("True Label")
 
