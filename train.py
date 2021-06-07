@@ -26,22 +26,6 @@ from session import SessionManager
 
 import shlex
 
-def str_2_bool(s):
-    if not isinstance(s, str):
-        raise TypeError('Trying to convert arbitrary object to boolean.')
-    
-    s = s.lower()
-
-    tlist = ['true',  't', '1', 'yes', 'y']
-    flist = ['false', 'f', '0', 'no',  'n']
-    if s in tlist:
-        return True
-    
-    if s in flist:
-        return False
-
-    raise argparse.ArgumentTypeError('Expected boolean value.')
-
 parser = argparse.ArgumentParser(description='PyTorch MixMatch Training')
 
 # Optimization options
@@ -67,7 +51,7 @@ parser.add_argument('--alpha', default=0.75, type=float)
 parser.add_argument('--lambda-u', default=75, type=float)
 parser.add_argument('--T', default=0.5, type=float)
 parser.add_argument('--ema-decay', default=0.999, type=float)
-parser.add_argument('--enable-mixmatch', default=True, type=str_2_bool)
+parser.add_argument('--enable-mixmatch', action="store_true")
 parser.add_argument('--transforms', default='default.json', type=str)
 parser.add_argument('--use-pretrained', '-p', action="store_true",
                     help='use a pretrained model as a starting point')
@@ -479,6 +463,8 @@ def create_item(id_folder, id_file, category='unclassified'):
         'category'  : category
     }
 
+#def create_test(dataset_name, output_path, )
+
 if __name__ == '__main__':
     queue = []
 
@@ -504,7 +490,7 @@ if __name__ == '__main__':
 
     sendMetrics = lambda metrics : print(metrics)
 
-    args_string = '--dataset-name cifar10 --n-labeled 10000 --enable-mixmatch false --use-pretrained'
+    args_string = '--use-pretrained'
 
     main(
         base_path=base_path,
