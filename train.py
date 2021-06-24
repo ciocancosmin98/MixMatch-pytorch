@@ -67,6 +67,10 @@ parser.add_argument('--dataset-name', default='animals10', type=str, metavar='NA
                     help='name of the dataset')
 parser.add_argument('--session-id', default=-1, type=int, metavar='ID',
                     help='the id of the session to be resumed')
+parser.add_argument('--noise-dataset', default='none', type=str,
+                    help='name of the dataset where images are taken from and put into the unlabeled training set')
+parser.add_argument('--noise-amount', default=0, type=int,
+                    help='the number of erroneous images to be added to the unlabeled training set')
 
 def main(base_path=None, output_path=None, args_string=None, categories=None, queue=None, sendMetrics=None):
     global constants

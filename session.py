@@ -267,8 +267,7 @@ class SessionManager:
         transforms_name = self.constants['transforms']
 
         if not queue is None:
-            qReader = cds.ImageQueueReader(queue, self.constants['base_path'],
-                            self.constants['class_names'], self.spath)
+            qReader = cds.ImageQueueReader(queue, self.constants, self.spath)
 
             while not qReader.tick():
                 pass

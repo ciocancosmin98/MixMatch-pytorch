@@ -353,10 +353,11 @@ def get_filenames_train_validate_test(dataset_name, session_path, n_labeled=1000
     return labeled, unlabeled, val, test
 
 class ImageQueueReader:
-    def __init__(self, queue, base_path, categories, session_dir, min_train_per_class=50, train_perc=0.5):
+    def __init__(self, queue, constants, session_dir, min_train_per_class=50, train_perc=0.5):
+        self.constants = constants
         self.queue = queue
-        self.categories = categories
-        self.base_path = base_path
+        self.categories = self.constants['class_names']
+        self.base_path = self.constants['base_path']
         self.train_perc = train_perc
         self.session_dir = session_dir
 
@@ -364,13 +365,13 @@ class ImageQueueReader:
         # function will return True, meaning you can do the train test val
         # split and continue with the training;
         self.min_train_per_class = min_train_per_class
-        self.class_counts = [0] * len(categories)
+        self.class_counts = [0] * len(self.categories)
 
-        self.str_2_int = {cat : index for index, cat in enumerate(categories)}
+        self.str_2_int = {cat : index for index, cat in enumerate(self.categories)}
 
         self.unlabeled_fn = set()
 
-        self.all_labeled_fn = {cat : [] for cat in categories}
+        self.all_labeled_fn = {cat : [] for cat in self.categories}
 
     def _read_queue(self):
         while len(self.queue) > 0:
@@ -426,6 +427,34 @@ class ImageQueueReader:
             labeled_fn[cls] = self.all_labeled_fn[cls][  labeled_start : labeled_end]
 
         unlabeled_fn = list(self.unlabeled_fn)
+
+        if self.constants['noise_dataset'] != 'none':
+            print('==> Adding noise from', self.constants['noise_dataset'], '(' + str(self.constants['noise_amount']))
+
+            data_path = os.path.join('data', self.constants['noise_dataset'], 'images')
+
+            noise_fpaths = []
+            for category in os.listdir(data_path):
+                category_path = os.path.join(data_path, category)
+
+                for fname in os.listdir(category_path):
+                    fpath = os.path.join(category_path, fname)
+                    noise_fpaths.append(fpath)
+
+            if len(noise_fpaths) == 0:
+                raise Exception('No images found in noise dataset ' + self.constants['noise_dataset'])
+
+            random.shuffle(noise_fpaths)
+            if len(noise_fpaths) > self.constants['noise_amount']:
+                noise_fpaths = noise_fpaths[:self.constants['noise_amount']]
+
+            print(unlabeled_fn[:5])
+
+            print('')
+
+            print(noise_fpaths[:5])
+
+            unlabeled_fn.extend(noise_fpaths)
 
         save_path = os.path.join(self.session_dir, 'preprocessing', 'filenames_list.pkl')
         data = (labeled_fn, unlabeled_fn, val_fn, test_fn)
