@@ -1,9 +1,11 @@
 {
     "transforms_train" : [
         {
-            "name" : "RandomFlip"
+            "name" : "RandomHorizontalFlip"
         },
-
+        {
+            "name": "RandomVerticalFlip"
+        },
         {
             "name" : "RandomPadRotate",
             "degrees" : "15.0",
