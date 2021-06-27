@@ -89,7 +89,6 @@ class TrainState:
         self.ema_model = ema_model
 
         lr = constants['lr']
-        alpha = constants['alpha']
         lambda_u = constants['lambda_u']
         n_epochs = constants['epochs']
         self.constants = constants
@@ -97,7 +96,7 @@ class TrainState:
         self.train_criterion = SemiLoss(lambda_u, n_epochs)
         self.criterion = MyCrossEntropy()
         self.optimizer = optim.Adam(model.parameters(), lr=lr)
-        self.ema_optimizer = WeightEMA(model, ema_model, lr=lr, alpha=alpha)
+        self.ema_optimizer = WeightEMA(model, ema_model, lr=lr, alpha=constants['ema_decay'])
         self.class_names = class_names
 
         training_dir = os.path.join(session_path, 'training')
@@ -239,6 +238,40 @@ class SessionManager:
 
         return constants
 
+    def add_noise(self, unlabeled_fn, constants):
+        import random
+
+        name   = constants['noise_dataset']
+        amount = constants['noise_amount']
+
+        if name == 'none':
+            return unlabeled_fn
+
+        print('==> Adding noise from', name, '(' + str(amount) + ')')
+        data_path = os.path.join('data', name, 'images')
+
+        noise_fpaths = []
+        for category in os.listdir(data_path):
+            category_path = os.path.join(data_path, category)
+
+            for fname in os.listdir(category_path):
+                fpath = os.path.join(category_path, fname)
+                noise_fpaths.append(fpath)
+
+        if len(noise_fpaths) == 0:
+            raise Exception('No images found in noise dataset ' + name)
+
+        random.shuffle(noise_fpaths)
+        if len(noise_fpaths) > amount:
+            noise_fpaths = noise_fpaths[:amount]
+
+        print(unlabeled_fn[:5])
+        print('')
+        print(noise_fpaths[:5])
+
+        unlabeled_fn.extend(noise_fpaths)
+
+        return unlabeled_fn
 
     def load_dataset(self, args):
         constants = self.load_constants(args)
@@ -256,6 +289,8 @@ class SessionManager:
             # load custom dataset
             labeled_fn, unlabeled_fn, val_fn, test_fn = cds.get_filenames_train_validate_test(self.dname, 
                     self.pdir, constants['n_labeled'], constants['balance_unlabeled'], constants['n_test_per_class'])
+
+            unlabeled_fn = self.add_noise(unlabeled_fn, constants)
 
             prep = cds.Preprocessor(labeled_fn, unlabeled_fn, val_fn, test_fn, save_dir=self.pdir, overwrite=False, size=32)
 
