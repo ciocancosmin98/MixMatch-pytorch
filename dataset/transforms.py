@@ -43,8 +43,8 @@ def load_from_list(transform_list):
 
     return transforms.Compose(result_list)
 
-def load_transforms(transform_name):
-    transform_path = os.path.join('transforms', transform_name)
+def load_transforms(transform_path):
+    #transform_path = os.path.join('transforms', transform_name)
 
     """
     if transform_path is None or not os.path.exists(transform_path):
@@ -66,6 +66,8 @@ def load_transforms(transform_name):
 
     with open(transform_path) as f:
         data = json.load(f)
+
+    data = data['augmentations']
 
     transform_train = load_from_list(data['transforms_train'])
     transform_val   = load_from_list(data['transforms_val'])
