@@ -377,8 +377,8 @@ class ImageQueueReader:
         while len(self.queue) > 0:
             img_info = self.queue.pop(0)
 
-            file_id   = img_info['id_file']
-            folder_id = img_info['id_folder']
+            file_id   = str(img_info['id_file']) + '.jpeg'
+            folder_id = str(img_info['id_folder'])
             category  = img_info['category']
 
             img_path = os.path.join(self.base_path, folder_id, file_id)
